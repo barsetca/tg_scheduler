@@ -31,8 +31,8 @@ class TaskService:
             periodicity=periodicity
         )
         
-        # Создаем напоминание, если указано время
-        if task_time:
+        # Создаем напоминание, если указано время и время напоминания > 0
+        if task_time and reminder_time > 0:
             await TaskService._create_reminder_for_task(
                 task_id=task_id,
                 user_id=user_id,
@@ -113,7 +113,8 @@ class TaskService:
             )
             final_reminder_time = reminder_time if reminder_time is not None else task["reminder_time"]
             
-            if final_time:
+            # Создаем напоминание только если есть время и время напоминания > 0
+            if final_time and final_reminder_time > 0:
                 await TaskService._create_reminder_for_task(
                     task_id=task_id,
                     user_id=user_id,

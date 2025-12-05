@@ -177,7 +177,7 @@ async def back_action(callback: CallbackQuery, state: FSMContext):
                     await state.set_state("TaskCreationStates:waiting_for_reminder")
                     await callback.message.edit_text(
                         f"Время: {task_time.strftime('%H:%M')}\n\n"
-                        "За сколько минут напомнить?",
+                        "За сколько времени напомнить?",
                         reply_markup=get_reminder_time_keyboard("back")
                     )
                     await callback.answer()

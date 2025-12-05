@@ -50,34 +50,28 @@ async def start_new_task(message_or_callback: Message | CallbackQuery, state: FS
     # Сохраняем состояние навигации
     await save_navigation_state(state, "main_menu")
     
-    # Клавиатура с кнопками возврата
+    # Клавиатура с кнопкой возврата в меню
     cancel_keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="◀️ Назад", callback_data="back"),
             InlineKeyboardButton(text="🏠 Меню", callback_data="main_menu")
         ]
     ])
     
+    message_text = (
+        "📝 Создание новой задачи\n\n"
+        "Введите описание новой задачи в текстовое поле. Для возврата нажмите кнопку Меню."
+    )
+    
     if isinstance(message_or_callback, CallbackQuery):
-        # Сначала отправляем сообщение с кнопками (минимальный текст)
         await message_or_callback.message.edit_text(
-            "📝 Создание новой задачи",
+            message_text,
             reply_markup=cancel_keyboard
         )
         await message_or_callback.answer()
-        # Затем отправляем текст запроса отдельным сообщением
-        await message_or_callback.message.answer(
-            "Введите описание задачи:"
-        )
     else:
-        # Сначала отправляем сообщение с кнопками
         await message_or_callback.answer(
-            "📝 Создание новой задачи",
+            message_text,
             reply_markup=cancel_keyboard
-        )
-        # Затем отправляем текст запроса отдельным сообщением
-        await message_or_callback.answer(
-            "Введите описание задачи:"
         )
     
     await state.set_state(TaskCreationStates.waiting_for_title)
@@ -94,6 +88,7 @@ async def process_title(message: Message, state: FSMContext):
     await state.update_data(title=title, calendar_context="create")
     await state.set_state(TaskCreationStates.waiting_for_date)
     await save_navigation_state(state, "TaskCreationStates:waiting_for_title")
+    
     await message.answer(
         f"Описание сохранено: {title}\n\n"
         "Выберите дату из календаря:",
@@ -172,7 +167,7 @@ async def process_time(message: Message, state: FSMContext):
         await save_navigation_state(state, "TaskCreationStates:waiting_for_time")
         await message.answer(
             f"✅ Время установлено: {task_time.strftime('%H:%M')}\n\n"
-            "За сколько минут напомнить?",
+            "За сколько времени напомнить?",
             reply_markup=get_reminder_time_keyboard("back")
         )
 
@@ -194,13 +189,37 @@ async def process_reminder(callback: CallbackQuery, state: FSMContext):
             await callback.answer()
             return
     
+    # Обработка отмены напоминания
+    if callback.data == "reminder_cancel":
+        await state.update_data(reminder_time=0)
+        await state.set_state(TaskCreationStates.waiting_for_periodicity)
+        await save_navigation_state(state, "TaskCreationStates:waiting_for_reminder")
+        
+        await callback.message.edit_text(
+            "Напоминание отменено\n\n"
+            "Периодичность задачи:",
+            reply_markup=get_periodicity_keyboard("back")
+        )
+        await callback.answer("✅ Напоминание отменено")
+        return
+    
     minutes = int(callback.data.split("_")[1])
     await state.update_data(reminder_time=minutes)
     await state.set_state(TaskCreationStates.waiting_for_periodicity)
     await save_navigation_state(state, "TaskCreationStates:waiting_for_reminder")
     
+    # Форматирование времени напоминания
+    if minutes == 1440:
+        reminder_text = "за 1 сутки"
+    elif minutes == 10080:
+        reminder_text = "за 1 неделю"
+    elif minutes == 0:
+        reminder_text = "не установлено"
+    else:
+        reminder_text = f"за {minutes} минут"
+    
     await callback.message.edit_text(
-        f"Напоминание установлено: за {minutes} минут\n\n"
+        f"Напоминание установлено: {reminder_text}\n\n"
         "Периодичность задачи:",
         reply_markup=get_periodicity_keyboard("back")
     )
@@ -220,7 +239,7 @@ async def process_periodicity(callback: CallbackQuery, state: FSMContext):
             if task_time:
                 await callback.message.edit_text(
                     f"Время: {task_time.strftime('%H:%M')}\n\n"
-                    "За сколько минут напомнить?",
+                    "За сколько времени напомнить?",
                     reply_markup=get_reminder_time_keyboard("back")
                 )
             else:
@@ -246,12 +265,37 @@ async def process_periodicity(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     
     try:
+        # Проверка на дублирование времени
+        task_date = data["task_date"]
+        task_time = data.get("task_time")
+        
+        if task_time:
+            from database import db
+            existing_tasks = await db.get_tasks_by_datetime(
+                user_id=callback.from_user.id,
+                task_date=task_date,
+                task_time=task_time
+            )
+            
+            if existing_tasks:
+                existing_task = existing_tasks[0]
+                task_time_str = task_time.strftime('%H:%M')
+                existing_title = existing_task.get('title', 'Без названия')
+                await callback.message.edit_text(
+                    f"⚠️ На это время ({task_time_str}) уже назначена задача:\n\n"
+                    f"📋 {existing_title}\n\n"
+                    f"Выберите другое время или измените предыдущую задачу:",
+                    reply_markup=get_periodicity_keyboard("back")
+                )
+                await callback.answer(f"⚠️ На это время уже есть задача: {existing_title}", show_alert=True)
+                return
+        
         task_id = await task_service.create_task(
             user_id=callback.from_user.id,
             title=data["title"],
             description=None,
-            task_date=data["task_date"],
-            task_time=data.get("task_time"),
+            task_date=task_date,
+            task_time=task_time,
             reminder_time=data.get("reminder_time", 0),
             periodicity=periodicity_value
         )
@@ -479,6 +523,34 @@ async def edit_reminder(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("reminder_"), TaskEditStates.waiting_for_reminder)
 async def process_edit_reminder(callback: CallbackQuery, state: FSMContext):
     """Обработка нового времени напоминания"""
+    if callback.data == "back":
+        data = await state.get_data()
+        task_id = data.get("task_id")
+        if task_id:
+            task = await task_service.get_task(task_id, callback.from_user.id)
+            await callback.message.edit_text(
+                format_task_message(task),
+                reply_markup=get_task_menu(task_id, "back")
+            )
+            await state.clear()
+            await callback.answer()
+            return
+    
+    # Обработка отмены напоминания
+    if callback.data == "reminder_cancel":
+        data = await state.get_data()
+        task_id = data.get("task_id")
+        if task_id:
+            await task_service.update_task(task_id, callback.from_user.id, reminder_time=0)
+            task = await task_service.get_task(task_id, callback.from_user.id)
+            await callback.message.edit_text(
+                f"✅ Напоминание отменено!\n\n{format_task_message(task)}",
+                reply_markup=get_task_menu(task_id, "back")
+            )
+            await state.clear()
+            await callback.answer("✅ Напоминание отменено")
+            return
+    
     if callback.data == "cancel":
         data = await state.get_data()
         task_id = data.get("task_id")
@@ -505,6 +577,16 @@ async def process_edit_reminder(callback: CallbackQuery, state: FSMContext):
         await task_service.update_task(
             task_id, callback.from_user.id, reminder_time=minutes
         )
+        
+        # Форматирование времени напоминания для сообщения
+        if minutes == 1440:
+            reminder_text = "за 1 сутки"
+        elif minutes == 10080:
+            reminder_text = "за 1 неделю"
+        elif minutes == 0:
+            reminder_text = "не установлено"
+        else:
+            reminder_text = f"за {minutes} минут"
         task = await task_service.get_task(task_id, callback.from_user.id)
         await callback.message.edit_text(
             f"✅ Задача обновлена!\n\n{format_task_message(task)}",

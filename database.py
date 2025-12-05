@@ -278,6 +278,36 @@ class Database:
             logger.error(f"Ошибка при получении задач: {e}")
             raise
     
+    async def get_tasks_by_datetime(
+        self,
+        user_id: int,
+        task_date: date,
+        task_time: time,
+        exclude_task_id: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """Получить задачи на определенную дату и время (для проверки дублирования)"""
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                db.row_factory = aiosqlite.Row
+                query = """
+                    SELECT * FROM tasks 
+                    WHERE user_id = ? AND task_date = ? AND task_time = ? AND is_completed = FALSE
+                """
+                params = [user_id, task_date.isoformat(), task_time.isoformat()]
+                
+                if exclude_task_id:
+                    query += " AND id != ?"
+                    params.append(exclude_task_id)
+                
+                query += " ORDER BY created_at ASC"
+                
+                async with db.execute(query, tuple(params)) as cursor:
+                    rows = await cursor.fetchall()
+                    return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(f"Ошибка при получении задач по дате и времени: {e}")
+            raise
+    
     async def get_tasks_by_date_range(
         self,
         user_id: int,

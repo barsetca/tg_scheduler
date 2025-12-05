@@ -79,14 +79,56 @@ async def process_postpone(message: Message, state: FSMContext):
             return
         
         new_time = datetime.now() + timedelta(minutes=minutes)
+        from utils.keyboards import get_main_menu
+        from utils.keyboards import InlineKeyboardMarkup, InlineKeyboardButton
+        
+        # Клавиатура с кнопкой ОК для перехода в главное меню
+        ok_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ ОК", callback_data="main_menu")]
+        ])
+        
         await message.answer(
             f"✅ Напоминание отложено на {new_time.strftime('%H:%M')}\n\n"
             f"{format_reminder_message(task, minutes)}",
-            reply_markup=get_reminder_actions(task_id, reminder_id)
+            reply_markup=ok_keyboard
         )
         await state.clear()
     except Exception as e:
         logger.error(f"Ошибка при откладывании напоминания: {e}")
         await message.answer("❌ Ошибка сервера. Попробуйте позже.")
         await state.clear()
+
+
+@router.callback_query(F.data.startswith("reminder_ok_"))
+async def reminder_ok(callback: CallbackQuery):
+    """Обработка кнопки ОК при напоминании - отключить напоминание и перейти в главное меню"""
+    try:
+        parts = callback.data.split("_")
+        reminder_id = int(parts[2])
+        task_id = int(parts[3])
+        
+        # Проверяем, что задача принадлежит пользователю
+        task = await task_service.get_task(task_id, callback.from_user.id)
+        if not task:
+            await callback.answer("❌ Задача не найдена или не принадлежит вам!", show_alert=True)
+            return
+        
+        # Отключаем напоминание (устанавливаем reminder_time=0)
+        await task_service.update_task(task_id, callback.from_user.id, reminder_time=0)
+        
+        # Удаляем все неотправленные напоминания для этой задачи
+        from database import db
+        await db.delete_reminders_by_task(task_id)
+        
+        # Переходим в главное меню
+        from utils.keyboards import get_main_menu
+        await callback.message.edit_text(
+            "✅ Напоминание отключено. Задача остается привязанной ко времени.\n\n"
+            "👋 Главное меню\n\nВыберите действие:",
+            reply_markup=get_main_menu()
+        )
+        await callback.answer("✅ Напоминание отключено")
+    except Exception as e:
+        logger.error(f"Ошибка при обработке кнопки ОК напоминания: {e}", exc_info=True)
+        await callback.answer("❌ Ошибка сервера. Попробуйте позже.", show_alert=True)
 

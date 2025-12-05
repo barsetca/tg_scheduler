@@ -16,7 +16,7 @@ from middleware.restart_check import RestartCheckMiddleware, set_start_time
 from middleware.advanced_rate_limiter import AdvancedRateLimiterMiddleware
 
 # Импорт обработчиков
-from handlers import start, tasks, view, reminders, callbacks, calendar, time, cleanup
+from handlers import start, tasks, view, reminders, callbacks, calendar, time, cleanup, unhandled
 
 # Настройка логирования
 logging.basicConfig(
@@ -145,27 +145,68 @@ async def main():
     dp.include_router(callbacks.router)
     dp.include_router(calendar.router)
     dp.include_router(time.router)  # Обрабатывает time_* callback (должен быть после tasks, чтобы не перехватывать edit_time_)
+    dp.include_router(unhandled.router)  # Обработчик необработанных сообщений (должен быть последним)
     
     # Глобальный обработчик ошибок
     @dp.errors()
-    async def error_handler(update, exception):
+    async def error_handler(event, exception):
         """Глобальный обработчик ошибок"""
         logger.error(f"Необработанная ошибка: {exception}", exc_info=True)
+        
+        # Игнорируем ошибки, связанные с устаревшими callback query
+        if "query is too old" in str(exception) or "query ID is invalid" in str(exception):
+            logger.warning(f"Игнорируем устаревший callback query: {exception}")
+            return
+        
         try:
-            from aiogram.types import Update
-            if isinstance(update, Update):
-                if update.message:
-                    await update.message.answer(
-                        "⚠️ Программа временно недоступна.\n\n"
-                        "Попробуйте позже или обратитесь к администратору."
+            # Ждем 5 секунд перед отправкой сообщения
+            await asyncio.sleep(5)
+            
+            from aiogram.types import Message, CallbackQuery
+            
+            # Обрабатываем сообщения
+            if isinstance(event, Message):
+                try:
+                    await event.answer(
+                        "⚠️ Сервер временно не доступен, попробуйте позже.\n\n"
+                        "Извините за неудобства."
                     )
-                elif update.callback_query:
-                    await update.callback_query.answer(
-                        "⚠️ Программа временно недоступна. Попробуйте позже.",
+                except Exception as e:
+                    logger.error(f"Не удалось отправить сообщение об ошибке пользователю: {e}")
+            
+            # Обрабатываем callback query
+            elif isinstance(event, CallbackQuery):
+                try:
+                    await event.answer(
+                        "⚠️ Сервер временно не доступен, попробуйте позже. Извините за неудобства.",
                         show_alert=True
                     )
+                except Exception as e:
+                    logger.error(f"Не удалось ответить на callback query об ошибке: {e}")
+            
+            # Если event - это Update объект
+            else:
+                from aiogram.types import Update
+                if isinstance(event, Update):
+                    if event.message:
+                        try:
+                            await event.message.answer(
+                                "⚠️ Сервер временно не доступен, попробуйте позже.\n\n"
+                                "Извините за неудобства."
+                            )
+                        except Exception as e:
+                            logger.error(f"Не удалось отправить сообщение об ошибке: {e}")
+                    elif event.callback_query:
+                        try:
+                            await event.callback_query.answer(
+                                "⚠️ Сервер временно не доступен, попробуйте позже. Извините за неудобства.",
+                                show_alert=True
+                            )
+                        except Exception as e:
+                            logger.error(f"Не удалось ответить на callback query об ошибке: {e}")
+                            
         except Exception as e:
-            logger.error(f"Ошибка при отправке сообщения об ошибке: {e}")
+            logger.error(f"Ошибка при обработке ошибки: {e}", exc_info=True)
     
     # Инициализация базы данных
     await db.init_db()

@@ -47,4 +47,6 @@ logs/
 .DS_Store
 Thumbs.db
 
+# History files
+REQUEST_HISTORY.md
 

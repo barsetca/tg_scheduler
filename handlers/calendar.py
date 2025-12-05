@@ -19,9 +19,11 @@ async def handle_calendar(callback: CallbackQuery, state: FSMContext):
         parts = callback.data.split("_")
         # Определяем префикс (calendar или calendar_view)
         if len(parts) > 2 and parts[1] == "view":
+            # Формат: calendar_view_action_...
             action = parts[2]
             prefix_offset = 1
         else:
+            # Формат: calendar_action_...
             action = parts[1]
             prefix_offset = 0
         
@@ -34,10 +36,11 @@ async def handle_calendar(callback: CallbackQuery, state: FSMContext):
             month = int(parts[3 + prefix_offset])
             day = int(parts[4 + prefix_offset])
             selected_date = date(year, month, day)
+            today = date.today()
             
             # Проверяем, что дата не в прошлом (только для создания задач)
-            if selected_date < date.today() and calendar_context != "view_tasks":
-                await callback.answer("❌ Нельзя выбрать прошедшую дату!", show_alert=True)
+            if calendar_context == "create" and selected_date < today:
+                await callback.answer("❌ Нельзя выбрать прошедшую дату! Выберите сегодняшнюю или будущую дату.", show_alert=True)
                 return
             
             # Сохраняем выбранную дату
@@ -45,13 +48,33 @@ async def handle_calendar(callback: CallbackQuery, state: FSMContext):
             
             # В зависимости от контекста переходим к следующему шагу
             if calendar_context == "create":
+                # Показываем существующие задачи на выбранную дату
+                from services.task_service import task_service
+                from utils.formatting import format_time_str
+                
+                tasks = await task_service.get_tasks_by_date(
+                    user_id=callback.from_user.id,
+                    task_date=selected_date,
+                    show_completed=False
+                )
+                
+                tasks_text = ""
+                if tasks:
+                    tasks_text = "\n\n📋 Задачи на этот день:\n"
+                    for t in tasks:
+                        task_time_str = format_time_str(t.get("task_time"))
+                        if task_time_str:
+                            tasks_text += f"  • {task_time_str} - {t.get('title', 'Без названия')}\n"
+                        else:
+                            tasks_text += f"  • Без времени - {t.get('title', 'Без названия')}\n"
+                
                 await state.set_state("TaskCreationStates:waiting_for_time")
                 from utils.navigation import save_navigation_state
                 await save_navigation_state(state, "TaskCreationStates:waiting_for_date")
                 from utils.keyboards import get_time_keyboard
                 await state.update_data(time_context="create", time_hours=12, time_minutes=0)
                 await callback.message.edit_text(
-                    f"✅ Дата выбрана: {selected_date.strftime('%d.%m.%Y')}\n\n"
+                    f"✅ Дата выбрана: {selected_date.strftime('%d.%m.%Y')}{tasks_text}\n\n"
                     "Выберите время или нажмите 'Пропустить':",
                     reply_markup=get_time_keyboard(hours=12, minutes=0, prefix="time_create")
                 )
@@ -111,13 +134,33 @@ async def handle_calendar(callback: CallbackQuery, state: FSMContext):
             await state.update_data(task_date=today)
             
             if calendar_context == "create":
+                # Показываем существующие задачи на выбранную дату
+                from services.task_service import task_service
+                from utils.formatting import format_time_str
+                
+                tasks = await task_service.get_tasks_by_date(
+                    user_id=callback.from_user.id,
+                    task_date=today,
+                    show_completed=False
+                )
+                
+                tasks_text = ""
+                if tasks:
+                    tasks_text = "\n\n📋 Задачи на этот день:\n"
+                    for t in tasks:
+                        task_time_str = format_time_str(t.get("task_time"))
+                        if task_time_str:
+                            tasks_text += f"  • {task_time_str} - {t.get('title', 'Без названия')}\n"
+                        else:
+                            tasks_text += f"  • Без времени - {t.get('title', 'Без названия')}\n"
+                
                 await state.set_state("TaskCreationStates:waiting_for_time")
                 from utils.navigation import save_navigation_state
                 await save_navigation_state(state, "TaskCreationStates:waiting_for_date")
                 from utils.keyboards import get_time_keyboard
                 await state.update_data(time_context="create", time_hours=12, time_minutes=0)
                 await callback.message.edit_text(
-                    f"✅ Дата выбрана: {today.strftime('%d.%m.%Y')}\n\n"
+                    f"✅ Дата выбрана: {today.strftime('%d.%m.%Y')}{tasks_text}\n\n"
                     "Выберите время или нажмите 'Пропустить':",
                     reply_markup=get_time_keyboard(hours=12, minutes=0, prefix="time_create")
                 )
@@ -176,13 +219,33 @@ async def handle_calendar(callback: CallbackQuery, state: FSMContext):
             await state.update_data(task_date=tomorrow)
             
             if calendar_context == "create":
+                # Показываем существующие задачи на выбранную дату
+                from services.task_service import task_service
+                from utils.formatting import format_time_str
+                
+                tasks = await task_service.get_tasks_by_date(
+                    user_id=callback.from_user.id,
+                    task_date=tomorrow,
+                    show_completed=False
+                )
+                
+                tasks_text = ""
+                if tasks:
+                    tasks_text = "\n\n📋 Задачи на этот день:\n"
+                    for t in tasks:
+                        task_time_str = format_time_str(t.get("task_time"))
+                        if task_time_str:
+                            tasks_text += f"  • {task_time_str} - {t.get('title', 'Без названия')}\n"
+                        else:
+                            tasks_text += f"  • Без времени - {t.get('title', 'Без названия')}\n"
+                
                 await state.set_state("TaskCreationStates:waiting_for_time")
                 from utils.navigation import save_navigation_state
                 await save_navigation_state(state, "TaskCreationStates:waiting_for_date")
                 from utils.keyboards import get_time_keyboard
                 await state.update_data(time_context="create", time_hours=12, time_minutes=0)
                 await callback.message.edit_text(
-                    f"✅ Дата выбрана: {tomorrow.strftime('%d.%m.%Y')}\n\n"
+                    f"✅ Дата выбрана: {tomorrow.strftime('%d.%m.%Y')}{tasks_text}\n\n"
                     "Выберите время или нажмите 'Пропустить':",
                     reply_markup=get_time_keyboard(hours=12, minutes=0, prefix="time_create")
                 )
@@ -235,10 +298,18 @@ async def handle_calendar(callback: CallbackQuery, state: FSMContext):
             
             await callback.answer(f"✅ Выбрана дата: {tomorrow.strftime('%d.%m.%Y')}")
             
-        elif action == "prev_month":
+        elif action == "prev" and len(parts) > 2 + prefix_offset and parts[2 + prefix_offset] == "month":
             # Предыдущий месяц
-            year = int(parts[2 + prefix_offset])
-            month = int(parts[3 + prefix_offset])
+            # Формат: calendar_prev_month_year_month или calendar_view_prev_month_year_month
+            try:
+                year = int(parts[3 + prefix_offset])
+                month = int(parts[4 + prefix_offset])
+            except (IndexError, ValueError):
+                # Если не удалось распарсить, используем текущую дату
+                today = date.today()
+                year = today.year
+                month = today.month
+            
             if month == 1:
                 month = 12
                 year -= 1
@@ -246,16 +317,31 @@ async def handle_calendar(callback: CallbackQuery, state: FSMContext):
                 month -= 1
             
             selected_date = data.get("task_date")
+            # Преобразуем selected_date в объект date, если это строка
+            if selected_date and isinstance(selected_date, str):
+                try:
+                    selected_date = date.fromisoformat(selected_date)
+                except:
+                    selected_date = None
+            
             prefix = "calendar_view" if calendar_context == "view_tasks" else "calendar"
             await callback.message.edit_reply_markup(
                 reply_markup=get_calendar_keyboard(year, month, selected_date, prefix)
             )
             await callback.answer()
             
-        elif action == "next_month":
+        elif action == "next" and len(parts) > 2 + prefix_offset and parts[2 + prefix_offset] == "month":
             # Следующий месяц
-            year = int(parts[2 + prefix_offset])
-            month = int(parts[3 + prefix_offset])
+            # Формат: calendar_next_month_year_month или calendar_view_next_month_year_month
+            try:
+                year = int(parts[3 + prefix_offset])
+                month = int(parts[4 + prefix_offset])
+            except (IndexError, ValueError):
+                # Если не удалось распарсить, используем текущую дату
+                today = date.today()
+                year = today.year
+                month = today.month
+            
             if month == 12:
                 month = 1
                 year += 1
@@ -263,6 +349,13 @@ async def handle_calendar(callback: CallbackQuery, state: FSMContext):
                 month += 1
             
             selected_date = data.get("task_date")
+            # Преобразуем selected_date в объект date, если это строка
+            if selected_date and isinstance(selected_date, str):
+                try:
+                    selected_date = date.fromisoformat(selected_date)
+                except:
+                    selected_date = None
+            
             prefix = "calendar_view" if calendar_context == "view_tasks" else "calendar"
             await callback.message.edit_reply_markup(
                 reply_markup=get_calendar_keyboard(year, month, selected_date, prefix)

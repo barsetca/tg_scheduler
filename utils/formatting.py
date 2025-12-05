@@ -49,7 +49,8 @@ def format_task_message(task: Dict) -> str:
         message += f"⏰ Время: {time_str}\n"
     
     if reminder_time > 0:
-        message += f"🔔 Напомнить за {reminder_time} мин\n"
+        reminder_str = format_reminder_time(reminder_time)
+        message += f"🔔 Напомнить за {reminder_str}\n"
     elif task_time:
         message += f"🔔 Напомнить в момент времени\n"
     
@@ -129,4 +130,58 @@ def format_time_str(time_value: str | time | None) -> str:
         if isinstance(time_value, str):
             return time_value[:5]  # HH:MM
         return str(time_value)
+
+
+def format_reminder_time(minutes: int) -> str:
+    """Форматирование времени напоминания в понятный формат"""
+    if minutes == 0:
+        return "в момент времени"
+    
+    if minutes < 60:
+        # Меньше часа - в минутах
+        return f"{minutes} мин"
+    
+    hours = minutes // 60
+    remaining_minutes = minutes % 60
+    
+    if hours < 24:
+        # Больше часа, но меньше суток - часы и минуты
+        if remaining_minutes == 0:
+            return f"{hours} ч"
+        return f"{hours} ч {remaining_minutes} мин"
+    
+    days = hours // 24
+    remaining_hours = hours % 24
+    
+    if days < 30:
+        # Больше суток, но меньше месяца - дни, часы и минуты
+        parts = [f"{days} дн"]
+        if remaining_hours > 0:
+            parts.append(f"{remaining_hours} ч")
+        if remaining_minutes > 0:
+            parts.append(f"{remaining_minutes} мин")
+        return " ".join(parts)
+    
+    months = days // 30
+    remaining_days = days % 30
+    
+    if months < 12:
+        # Больше месяца, но меньше года - месяцы, дни, часы
+        parts = [f"{months} мес"]
+        if remaining_days > 0:
+            parts.append(f"{remaining_days} дн")
+        if remaining_hours > 0:
+            parts.append(f"{remaining_hours} ч")
+        return " ".join(parts)
+    
+    # Больше года - годы, месяцы, дни
+    years = months // 12
+    remaining_months = months % 12
+    
+    parts = [f"{years} г"]
+    if remaining_months > 0:
+        parts.append(f"{remaining_months} мес")
+    if remaining_days > 0:
+        parts.append(f"{remaining_days} дн")
+    return " ".join(parts)
 

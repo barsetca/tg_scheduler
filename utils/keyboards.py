@@ -45,7 +45,10 @@ def get_reminder_actions(task_id: int, reminder_id: int) -> InlineKeyboardMarkup
             InlineKeyboardButton(text="⏰ Отложить", callback_data=f"postpone_{reminder_id}_{task_id}"),
             InlineKeyboardButton(text="✅ Завершить", callback_data=f"complete_task_{task_id}")
         ],
-        [InlineKeyboardButton(text="🗑️ Удалить", callback_data=f"delete_task_{task_id}")]
+        [
+            InlineKeyboardButton(text="✅ ОК", callback_data=f"reminder_ok_{reminder_id}_{task_id}"),
+            InlineKeyboardButton(text="🗑️ Удалить", callback_data=f"delete_task_{task_id}")
+        ]
     ])
     return keyboard
 
@@ -61,6 +64,13 @@ def get_reminder_time_keyboard(back_callback: str = "back") -> InlineKeyboardMar
         [
             InlineKeyboardButton(text="30 мин", callback_data="reminder_30"),
             InlineKeyboardButton(text="60 мин", callback_data="reminder_60")
+        ],
+        [
+            InlineKeyboardButton(text="За сутки", callback_data="reminder_1440"),
+            InlineKeyboardButton(text="За неделю", callback_data="reminder_10080")
+        ],
+        [
+            InlineKeyboardButton(text="❌ Отменить", callback_data="reminder_cancel"),
         ],
         [
             InlineKeyboardButton(text="◀️ Назад", callback_data=back_callback),

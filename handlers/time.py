@@ -2,9 +2,10 @@
 from aiogram import Router, F
 from aiogram.types import CallbackQuery
 from aiogram.fsm.context import FSMContext
-from datetime import time
+from datetime import time, date
 from utils.keyboards import get_time_keyboard
 from utils.navigation import get_previous_state, save_navigation_state
+from services.task_service import task_service
 import logging
 
 logger = logging.getLogger(__name__)
@@ -115,6 +116,12 @@ async def handle_time_selection(callback: CallbackQuery, state: FSMContext):
                 # Если формат неожиданный, используем значения по умолчанию
                 hours = 12
                 minutes = 0
+            
+            # Проверяем, не установлено ли уже это время
+            if current_hours == hours and current_minutes == minutes:
+                await callback.answer("ℹ️ Это время уже установлено", show_alert=False)
+                return
+            
             await state.update_data(time_hours=hours, time_minutes=minutes)
             await callback.message.edit_reply_markup(
                 reply_markup=get_time_keyboard(hours, minutes, prefix)
@@ -124,21 +131,93 @@ async def handle_time_selection(callback: CallbackQuery, state: FSMContext):
         elif action == "confirm":
             # Подтверждение выбора времени
             selected_time = time(current_hours, current_minutes)
-            await state.update_data(task_time=selected_time)
             
             if time_context == "create":
+                # Проверка на дублирование времени при создании
+                task_date = data.get("task_date", date.today())
+                from database import db
+                existing_tasks = await db.get_tasks_by_datetime(
+                    user_id=callback.from_user.id,
+                    task_date=task_date,
+                    task_time=selected_time
+                )
+                
+                if existing_tasks:
+                    existing_task = existing_tasks[0]
+                    task_time_str = selected_time.strftime('%H:%M')
+                    existing_title = existing_task.get('title', 'Без названия')
+                    await callback.message.edit_text(
+                        f"⚠️ На это время ({task_time_str}) уже назначена задача:\n\n"
+                        f"📋 {existing_title}\n\n"
+                        f"Выберите другое время или измените предыдущую задачу:",
+                        reply_markup=get_time_keyboard(current_hours, current_minutes, prefix)
+                    )
+                    await callback.answer(f"⚠️ На это время уже есть задача: {existing_title}", show_alert=True)
+                    return
+                
+                await state.update_data(task_time=selected_time)
+                
+                # Показываем список задач на этот день
+                from services.task_service import task_service
+                from utils.formatting import format_time_str
+                
+                tasks = await task_service.get_tasks_by_date(
+                    user_id=callback.from_user.id,
+                    task_date=task_date,
+                    show_completed=False
+                )
+                
+                tasks_text = ""
+                if tasks:
+                    tasks_text = "\n\n📋 Задачи на этот день:\n"
+                    for t in tasks:
+                        task_time_str = format_time_str(t.get("task_time"))
+                        if task_time_str:
+                            tasks_text += f"  • {task_time_str} - {t.get('title', 'Без названия')}\n"
+                        else:
+                            tasks_text += f"  • Без времени - {t.get('title', 'Без названия')}\n"
+                
                 # При создании задачи переходим к выбору напоминания
                 await state.set_state("TaskCreationStates:waiting_for_reminder")
                 await save_navigation_state(state, "TaskCreationStates:waiting_for_time")
                 from utils.keyboards import get_reminder_time_keyboard
                 await callback.message.edit_text(
-                    f"✅ Время установлено: {selected_time.strftime('%H:%M')}\n\n"
-                    "За сколько минут напомнить?",
+                    f"✅ Время установлено: {selected_time.strftime('%H:%M')}{tasks_text}\n\n"
+                    "За сколько времени напомнить?",
                     reply_markup=get_reminder_time_keyboard("back")
                 )
             elif time_context == "edit":
-                # При редактировании обновляем задачу
+                # Проверка на дублирование времени при редактировании
                 task_id = data.get("task_id")
+                task = await task_service.get_task(task_id, callback.from_user.id)
+                if task:
+                    task_date_str = task.get("task_date")
+                    if task_date_str:
+                        from datetime import date as dt_date
+                        task_date = dt_date.fromisoformat(task_date_str) if isinstance(task_date_str, str) else task_date_str
+                        
+                        from database import db
+                        existing_tasks = await db.get_tasks_by_datetime(
+                            user_id=callback.from_user.id,
+                            task_date=task_date,
+                            task_time=selected_time,
+                            exclude_task_id=task_id
+                        )
+                        
+                        if existing_tasks:
+                            existing_task = existing_tasks[0]
+                            task_time_str = selected_time.strftime('%H:%M')
+                            existing_title = existing_task.get('title', 'Без названия')
+                            await callback.message.edit_text(
+                                f"⚠️ На это время ({task_time_str}) уже назначена задача:\n\n"
+                                f"📋 {existing_title}\n\n"
+                                f"Выберите другое время или измените предыдущую задачу:",
+                                reply_markup=get_time_keyboard(current_hours, current_minutes, prefix)
+                            )
+                            await callback.answer(f"⚠️ На это время уже есть задача: {existing_title}", show_alert=True)
+                            return
+                
+                # При редактировании обновляем задачу
                 from services.task_service import task_service
                 from utils.formatting import format_task_message
                 from utils.keyboards import get_task_menu
