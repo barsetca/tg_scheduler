@@ -1,0 +1,15 @@
+{
+  "venvPath": ".",
+  "venv": "venv",
+  "pythonVersion": "3.10",
+  "typeCheckingMode": "basic",
+  "reportMissingImports": "warning",
+  "reportMissingTypeStubs": false,
+  "exclude": [
+    "**/__pycache__",
+    "**/node_modules",
+    "**/venv",
+    "**/.venv"
+  ]
+}
+
