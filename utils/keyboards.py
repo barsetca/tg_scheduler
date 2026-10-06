@@ -81,6 +81,22 @@ def get_reminder_time_keyboard(back_callback: str = "back") -> InlineKeyboardMar
     return keyboard
 
 
+def get_google_calendar_choice_keyboard() -> InlineKeyboardMarkup:
+    """Выбор, нужно ли добавлять создаваемую задачу в Google Calendar."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📅 Добавить в Google Calendar", callback_data="google_calendar_yes"),
+        ],
+        [
+            InlineKeyboardButton(text="Продолжить без календаря", callback_data="google_calendar_no"),
+        ],
+        [
+            InlineKeyboardButton(text="◀️ Назад", callback_data="google_calendar_back"),
+            InlineKeyboardButton(text="🏠 Меню", callback_data="main_menu"),
+        ],
+    ])
+
+
 def get_periodicity_keyboard(back_callback: str = "back") -> InlineKeyboardMarkup:
     """Выбор периодичности"""
     keyboard = InlineKeyboardMarkup(inline_keyboard=[

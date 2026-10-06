@@ -153,6 +153,36 @@ telegram_task_bot/
 └── README.md            # Документация
 ```
 
+## 📅 Google Calendar
+
+При создании задачи с указанным временем после выбора напоминания бот предлагает добавить её в Google Calendar. Событие создаётся только при выборе «Добавить в Google Calendar»; иначе задача остаётся только в боте.
+
+Интеграция записывает название, описание, дату, время, повторяемость и popup-напоминание. Часовой пояс события берётся из `TIMEZONE`, поэтому время в календаре совпадает со временем бота.
+
+1. В Google Cloud включите Google Calendar API и создайте OAuth 2.0 Client ID.
+2. Получите refresh token с разрешением `https://www.googleapis.com/auth/calendar.events` для Google-аккаунта, в чей календарь должны попадать задачи.
+3. Заполните в `.env`:
+
+```env
+GOOGLE_CALENDAR_ENABLED=true
+GOOGLE_CALENDAR_ID=primary
+GOOGLE_OAUTH_CLIENT_ID=...
+GOOGLE_OAUTH_CLIENT_SECRET=...
+GOOGLE_OAUTH_REFRESH_TOKEN=...
+GOOGLE_CALENDAR_EVENT_DURATION_MINUTES=60
+```
+
+`GOOGLE_CALENDAR_ID=primary` означает основной календарь владельца OAuth-токена. Для другого календаря укажите его ID. После изменения `.env` перезапустите бота.
+
+Для получения refresh token заполните в `.env` только `GOOGLE_OAUTH_CLIENT_ID` и `GOOGLE_OAUTH_CLIENT_SECRET`, затем на компьютере с браузером выполните:
+
+```bash
+./setup.sh
+venv/bin/python3 get_google_oauth_refresh_token.py
+```
+
+Скрипт откроет страницу Google OAuth, после подтверждения выведет строку `GOOGLE_OAUTH_REFRESH_TOKEN=...`. Скопируйте её в `.env`, включите `GOOGLE_CALENDAR_ENABLED=true` и перезапустите бота. OAuth-клиент в Google Cloud должен быть создан как **Desktop app**.
+
 ## 🔒 Безопасность и изоляция пользователей
 
 **Полная изоляция данных:**
@@ -267,4 +297,3 @@ telegram_task_bot/
 ## 🤝 Вклад
 
 Если вы нашли ошибку или хотите предложить улучшение, создайте issue или pull request.
-

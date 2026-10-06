@@ -6,12 +6,14 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from utils.keyboards import (
     get_main_menu, get_reminder_time_keyboard, get_periodicity_keyboard,
-    get_task_menu, get_edit_task_keyboard, get_calendar_keyboard, get_time_keyboard
+    get_task_menu, get_edit_task_keyboard, get_calendar_keyboard, get_google_calendar_choice_keyboard,
+    get_time_keyboard
 )
 from utils.navigation import save_navigation_state, get_previous_state
 from utils.formatting import format_task_message, format_task_created_message
 from utils.validators import validate_time, validate_date, is_date_in_past
 from services.task_service import TaskValidationError, task_service
+from services.google_calendar_service import GoogleCalendarError, google_calendar_service
 from utils.datetime_utils import local_today
 import logging
 
@@ -26,6 +28,7 @@ class TaskCreationStates(StatesGroup):
     waiting_for_date = State()
     waiting_for_time = State()
     waiting_for_reminder = State()
+    waiting_for_google_calendar = State()
     waiting_for_periodicity = State()
 
 
@@ -191,20 +194,19 @@ async def process_reminder(callback: CallbackQuery, state: FSMContext):
     # Обработка отмены напоминания
     if callback.data == "reminder_cancel":
         await state.update_data(reminder_time=-1)
-        await state.set_state(TaskCreationStates.waiting_for_periodicity)
+        await state.set_state(TaskCreationStates.waiting_for_google_calendar)
         await save_navigation_state(state, "TaskCreationStates:waiting_for_reminder")
         
         await callback.message.edit_text(
-            "Напоминание отменено\n\n"
-            "Периодичность задачи:",
-            reply_markup=get_periodicity_keyboard("back")
+            "Напоминание отменено.\n\nДобавить задачу в Google Calendar?",
+            reply_markup=get_google_calendar_choice_keyboard()
         )
         await callback.answer("✅ Напоминание отменено")
         return
     
     minutes = int(callback.data.split("_")[1])
     await state.update_data(reminder_time=minutes)
-    await state.set_state(TaskCreationStates.waiting_for_periodicity)
+    await state.set_state(TaskCreationStates.waiting_for_google_calendar)
     await save_navigation_state(state, "TaskCreationStates:waiting_for_reminder")
     
     # Форматирование времени напоминания
@@ -219,8 +221,43 @@ async def process_reminder(callback: CallbackQuery, state: FSMContext):
     
     await callback.message.edit_text(
         f"Напоминание установлено: {reminder_text}\n\n"
+        "Добавить задачу в Google Calendar?",
+        reply_markup=get_google_calendar_choice_keyboard()
+    )
+    await callback.answer()
+
+
+@router.callback_query(
+    F.data.startswith("google_calendar_"),
+    TaskCreationStates.waiting_for_google_calendar,
+)
+async def process_google_calendar_choice(callback: CallbackQuery, state: FSMContext):
+    """Сохраняет выбор добавления создаваемой задачи в Google Calendar."""
+    if callback.data == "google_calendar_back":
+        await state.set_state(TaskCreationStates.waiting_for_reminder)
+        data = await state.get_data()
+        task_time = data.get("task_time")
+        await callback.message.edit_text(
+            f"Время: {task_time.strftime('%H:%M')}\n\nЗа сколько времени напомнить?",
+            reply_markup=get_reminder_time_keyboard("back"),
+        )
+        await callback.answer()
+        return
+
+    add_to_google_calendar = callback.data == "google_calendar_yes"
+    if add_to_google_calendar and not google_calendar_service.is_configured():
+        await callback.answer(
+            "Google Calendar не настроен. Заполните GOOGLE_* в .env и перезапустите бота.",
+            show_alert=True,
+        )
+        return
+
+    await state.update_data(add_to_google_calendar=add_to_google_calendar)
+    await state.set_state(TaskCreationStates.waiting_for_periodicity)
+    await save_navigation_state(state, "TaskCreationStates:waiting_for_google_calendar")
+    await callback.message.edit_text(
         "Периодичность задачи:",
-        reply_markup=get_periodicity_keyboard("back")
+        reply_markup=get_periodicity_keyboard("back"),
     )
     await callback.answer()
 
@@ -230,7 +267,25 @@ async def process_periodicity(callback: CallbackQuery, state: FSMContext):
     """Обработка выбора периодичности"""
     if callback.data == "back":
         # Возврат на предыдущий шаг
+        data = await state.get_data()
+        if "add_to_google_calendar" in data:
+            await state.set_state(TaskCreationStates.waiting_for_google_calendar)
+            await callback.message.edit_text(
+                "Добавить задачу в Google Calendar?",
+                reply_markup=get_google_calendar_choice_keyboard(),
+            )
+            await callback.answer()
+            return
+
         previous_state = await get_previous_state(state)
+        if previous_state == "TaskCreationStates:waiting_for_google_calendar":
+            await state.set_state(TaskCreationStates.waiting_for_google_calendar)
+            await callback.message.edit_text(
+                "Добавить задачу в Google Calendar?",
+                reply_markup=get_google_calendar_choice_keyboard(),
+            )
+            await callback.answer()
+            return
         if previous_state == "TaskCreationStates:waiting_for_reminder":
             await state.set_state(TaskCreationStates.waiting_for_reminder)
             data = await state.get_data()
@@ -296,7 +351,8 @@ async def process_periodicity(callback: CallbackQuery, state: FSMContext):
             task_date=task_date,
             task_time=task_time,
             reminder_time=data.get("reminder_time", 0),
-            periodicity=periodicity_value
+            periodicity=periodicity_value,
+            add_to_google_calendar=data.get("add_to_google_calendar", False),
         )
         
         task = await task_service.get_task(task_id, callback.from_user.id)
@@ -310,6 +366,9 @@ async def process_periodicity(callback: CallbackQuery, state: FSMContext):
         await callback.message.edit_text(str(e), reply_markup=get_main_menu())
         await callback.answer(str(e), show_alert=True)
         await state.clear()
+    except GoogleCalendarError as e:
+        logger.error("Не удалось создать событие Google Calendar: %s", e)
+        await callback.answer(str(e), show_alert=True)
     except Exception as e:
         logger.error(f"Ошибка при создании задачи: {e}")
         await callback.message.edit_text(

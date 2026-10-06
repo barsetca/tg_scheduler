@@ -4,6 +4,7 @@ from calendar import monthrange
 from datetime import date, time, datetime, timedelta
 from typing import Optional, Dict, Any
 from database import UNSET, db
+from services.google_calendar_service import google_calendar_service
 from utils.datetime_utils import local_now
 
 logger = logging.getLogger(__name__)
@@ -24,11 +25,22 @@ class TaskService:
         description: Optional[str] = None,
         task_time: Optional[time] = None,
         reminder_time: int = 0,
-        periodicity: str = "none"
+        periodicity: str = "none",
+        add_to_google_calendar: bool = False,
     ) -> int:
         """Создать задачу"""
         if periodicity == "none" and task_date < local_now().date():
             raise TaskValidationError("Одноразовую задачу нельзя создать задним числом.")
+
+        if add_to_google_calendar:
+            await google_calendar_service.create_event(
+                title=title,
+                task_date=task_date,
+                task_time=task_time,
+                description=description,
+                reminder_time=reminder_time,
+                periodicity=periodicity,
+            )
 
         task_id = await db.create_task(
             user_id=user_id,
