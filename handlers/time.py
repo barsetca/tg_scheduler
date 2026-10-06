@@ -2,9 +2,10 @@
 from aiogram import Router, F
 from aiogram.types import CallbackQuery
 from aiogram.fsm.context import FSMContext
-from datetime import time, date
+from datetime import time
 from utils.keyboards import get_time_keyboard
-from utils.navigation import get_previous_state, save_navigation_state
+from utils.navigation import save_navigation_state
+from utils.datetime_utils import local_today
 from services.task_service import task_service
 import logging
 
@@ -134,7 +135,7 @@ async def handle_time_selection(callback: CallbackQuery, state: FSMContext):
             
             if time_context == "create":
                 # Проверка на дублирование времени при создании
-                task_date = data.get("task_date", date.today())
+                task_date = data.get("task_date", local_today())
                 from database import db
                 existing_tasks = await db.get_tasks_by_datetime(
                     user_id=callback.from_user.id,
@@ -158,7 +159,6 @@ async def handle_time_selection(callback: CallbackQuery, state: FSMContext):
                 await state.update_data(task_time=selected_time)
                 
                 # Показываем список задач на этот день
-                from services.task_service import task_service
                 from utils.formatting import format_time_str
                 
                 tasks = await task_service.get_tasks_by_date(
@@ -218,7 +218,6 @@ async def handle_time_selection(callback: CallbackQuery, state: FSMContext):
                             return
                 
                 # При редактировании обновляем задачу
-                from services.task_service import task_service
                 from utils.formatting import format_task_message
                 from utils.keyboards import get_task_menu
                 
@@ -251,7 +250,6 @@ async def handle_time_selection(callback: CallbackQuery, state: FSMContext):
             elif time_context == "edit":
                 # При редактировании обновляем задачу
                 task_id = data.get("task_id")
-                from services.task_service import task_service
                 from utils.formatting import format_task_message
                 from utils.keyboards import get_task_menu
                 
@@ -270,4 +268,3 @@ async def handle_time_selection(callback: CallbackQuery, state: FSMContext):
     except Exception as e:
         logger.error(f"Ошибка при выборе времени: {e}")
         await callback.answer("❌ Ошибка при выборе времени")
-

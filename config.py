@@ -29,3 +29,12 @@ if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN не установлен в переменных окружения!")
 
 
+
+
+
+
+
+
+
+
+

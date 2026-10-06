@@ -1,11 +1,10 @@
 """Продвинутый Rate Limiter с 3 уровнями защиты"""
 from typing import Callable, Dict, Any, Awaitable, Optional, Tuple
 from aiogram import BaseMiddleware
-from aiogram.types import TelegramObject, Message, CallbackQuery, Update
+from aiogram.types import TelegramObject, Message, CallbackQuery
 from collections import defaultdict
 from datetime import datetime, timedelta
 import logging
-import re
 
 logger = logging.getLogger(__name__)
 

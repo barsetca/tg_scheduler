@@ -1,8 +1,9 @@
 """Сервис для работы с напоминаниями"""
 import logging
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import List, Dict, Any, Optional
 from database import db
+from utils.datetime_utils import local_now
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +14,7 @@ class ReminderService:
     @staticmethod
     async def get_due_reminders() -> List[Dict[str, Any]]:
         """Получить все напоминания, которые должны быть отправлены"""
-        now = datetime.now()
+        now = local_now()
         return await db.get_pending_reminders(now)
     
     @staticmethod
@@ -30,9 +31,10 @@ class ReminderService:
         if not reminder:
             return False
         
-        # Вычисляем новое время
-        current_time = datetime.fromisoformat(reminder["reminder_datetime"])
-        new_time = current_time + timedelta(minutes=minutes)
+        # Откладываем относительно момента нажатия. Если исходное
+        # напоминание уже просрочено, прибавление к старому времени привело бы
+        # к его немедленной повторной отправке.
+        new_time = local_now() + timedelta(minutes=minutes)
         
         return await db.update_reminder_time(reminder_id, user_id, new_time)
     
@@ -44,4 +46,3 @@ class ReminderService:
 
 # Глобальный экземпляр сервиса
 reminder_service = ReminderService()
-

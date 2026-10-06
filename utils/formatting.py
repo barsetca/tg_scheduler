@@ -1,8 +1,9 @@
 """Форматирование сообщений"""
-from datetime import date, time, datetime
-from typing import Optional, Dict, List
-from utils.validators import parse_time, parse_date
+from datetime import date, time, datetime, timedelta
+from typing import Dict, List
+from utils.validators import parse_time
 from utils.constants import PERIODICITY_MAP
+from utils.datetime_utils import local_today
 
 
 def format_task_message(task: Dict) -> str:
@@ -19,14 +20,14 @@ def format_task_message(task: Dict) -> str:
     if task_date:
         try:
             date_obj = datetime.fromisoformat(task_date).date() if isinstance(task_date, str) else task_date
-            today = date.today()
+            today = local_today()
             if date_obj == today:
                 date_str = "сегодня"
-            elif date_obj == today.replace(day=today.day + 1):
+            elif date_obj == today + timedelta(days=1):
                 date_str = "завтра"
             else:
                 date_str = date_obj.strftime("%d %B %Y")
-        except:
+        except (TypeError, ValueError):
             date_str = task_date
     else:
         date_str = "не указана"
@@ -51,8 +52,8 @@ def format_task_message(task: Dict) -> str:
     if reminder_time > 0:
         reminder_str = format_reminder_time(reminder_time)
         message += f"🔔 Напомнить за {reminder_str}\n"
-    elif task_time:
-        message += f"🔔 Напомнить в момент времени\n"
+    elif task_time and reminder_time == 0:
+        message += "🔔 Напомнить в момент времени\n"
     
     message += f"🔄 Периодичность: {periodicity_str}\n"
     
@@ -86,8 +87,8 @@ def format_reminder_message(task: Dict, minutes_before: int = 0) -> str:
 
 
 def format_tasks_list(tasks: List[Dict], date_obj: date) -> str:
-    """Форматирование списка задач"""
-    today = date.today()
+    """Форматирование списка задач в виде простого списка"""
+    today = local_today()
     if date_obj == today:
         date_str = "сегодня"
     else:
@@ -101,17 +102,38 @@ def format_tasks_list(tasks: List[Dict], date_obj: date) -> str:
     
     completed_count = sum(1 for task in tasks if task.get("is_completed"))
     message += f"Всего: {len(tasks)} | Выполнено: {completed_count}\n\n"
-    message += "Выберите задачу из списка ниже:"
+    
+    # Сортируем задачи: сначала по времени, потом по дате создания
+    sorted_tasks = sorted(tasks, key=lambda t: (
+        t.get("task_time") or "",  # Сначала задачи с временем
+        t.get("created_at") or ""  # Потом по дате создания
+    ))
+    
+    # Формируем простой список задач
+    for task in sorted_tasks:
+        status = "✅" if task.get("is_completed") else "⏳"
+        title = task.get("title", "Без названия")
+        task_time = task.get("task_time", "")
+        
+        # Форматируем время
+        time_str = format_time_str(task_time)
+        
+        # Если есть время - показываем время и название
+        if time_str:
+            message += f"{status} {time_str} - {title}\n"
+        else:
+            # Если времени нет - показываем только название
+            message += f"{status} {title}\n"
     
     return message
 
 
 def format_date(date_obj: date) -> str:
     """Форматирование даты для отображения"""
-    today = date.today()
+    today = local_today()
     if date_obj == today:
         return "сегодня"
-    elif date_obj == today.replace(day=today.day + 1):
+    elif date_obj == today + timedelta(days=1):
         return "завтра"
     else:
         return date_obj.strftime("%d %B %Y")
@@ -184,4 +206,3 @@ def format_reminder_time(minutes: int) -> str:
     if remaining_days > 0:
         parts.append(f"{remaining_days} дн")
     return " ".join(parts)
-

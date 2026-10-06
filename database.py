@@ -4,8 +4,12 @@ import logging
 from datetime import datetime, date, time
 from typing import Optional, List, Dict, Any
 from config import DATABASE_PATH
+from utils.datetime_utils import local_now, local_today
 
 logger = logging.getLogger(__name__)
+
+# Отличает «не менять время» от явного «удалить время из задачи».
+UNSET = object()
 
 
 class Database:
@@ -75,7 +79,7 @@ class Database:
         title: str,
         task_date: date,
         description: Optional[str] = None,
-        task_time: Optional[time] = None,
+        task_time: Optional[time] | object = UNSET,
         reminder_time: int = 0,
         periodicity: str = "none"
     ) -> int:
@@ -147,7 +151,7 @@ class Database:
             if task_date is not None:
                 updates.append("task_date = ?")
                 params.append(task_date.isoformat())
-            if task_time is not None:
+            if task_time is not UNSET:
                 updates.append("task_time = ?")
                 params.append(task_time.isoformat() if task_time else None)
             if reminder_time is not None:
@@ -161,7 +165,7 @@ class Database:
                 return False
             
             updates.append("updated_at = ?")
-            params.append(datetime.now().isoformat())
+            params.append(local_now().isoformat())
             params.extend([task_id, user_id])
             
             async with aiosqlite.connect(self.db_path) as db:
@@ -193,7 +197,7 @@ class Database:
                     UPDATE tasks 
                     SET is_completed = TRUE, updated_at = ?
                     WHERE id = ? AND user_id = ?
-                """, (datetime.now().isoformat(), task_id, user_id))
+                """, (local_now().isoformat(), task_id, user_id))
                 await db.commit()
                 
                 # Запись в историю
@@ -220,6 +224,12 @@ class Database:
         """Удалить задачу"""
         try:
             async with aiosqlite.connect(self.db_path) as db:
+                # Внешние ключи SQLite не включаются автоматически для нового
+                # соединения, поэтому напоминания удаляем явно.
+                await db.execute(
+                    "DELETE FROM reminders WHERE task_id = ? AND user_id = ?",
+                    (task_id, user_id),
+                )
                 # Запись в историю перед удалением
                 await db.execute("""
                     INSERT INTO task_history (task_id, user_id, action)
@@ -227,14 +237,14 @@ class Database:
                 """, (task_id, user_id, "deleted"))
                 await db.commit()
                 
-                await db.execute("""
+                cursor = await db.execute("""
                     DELETE FROM tasks 
                     WHERE id = ? AND user_id = ?
                 """, (task_id, user_id))
                 await db.commit()
                 
                 logger.info(f"Задача {task_id} удалена")
-                return True
+                return cursor.rowcount > 0
         except Exception as e:
             logger.error(f"Ошибка при удалении задачи: {e}")
             raise
@@ -258,7 +268,7 @@ class Database:
                         WHERE user_id = ? AND task_date < ? AND is_completed = FALSE
                         ORDER BY task_time ASC, created_at ASC
                     """
-                    params = (user_id, date.today().isoformat())
+                    params = (user_id, local_today().isoformat())
                 else:
                     query = """
                         SELECT * FROM tasks 
@@ -285,17 +295,23 @@ class Database:
         task_time: time,
         exclude_task_id: Optional[int] = None
     ) -> List[Dict[str, Any]]:
-        """Получить задачи на определенную дату и время (для проверки дублирования)"""
+        """Получить задачи с указанной датой и временем (для проверки дублирования)"""
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 db.row_factory = aiosqlite.Row
+                
+                # Преобразуем time в строку в том же формате, что используется при сохранении
+                # В create_task используется task_time.isoformat(), который дает формат HH:MM:SS
+                time_str = task_time.isoformat()
+                
                 query = """
                     SELECT * FROM tasks 
-                    WHERE user_id = ? AND task_date = ? AND task_time = ? AND is_completed = FALSE
+                    WHERE user_id = ? AND task_date = ? AND task_time = ?
                 """
-                params = [user_id, task_date.isoformat(), task_time.isoformat()]
+                params = [user_id, task_date.isoformat(), time_str]
                 
-                if exclude_task_id:
+                # Исключаем задачу при редактировании
+                if exclude_task_id is not None:
                     query += " AND id != ?"
                     params.append(exclude_task_id)
                 
@@ -307,39 +323,56 @@ class Database:
         except Exception as e:
             logger.error(f"Ошибка при получении задач по дате и времени: {e}")
             raise
-    
+
     async def get_tasks_by_date_range(
         self,
         user_id: int,
         start_date: Optional[date] = None,
-        end_date: Optional[date] = None
+        end_date: Optional[date] = None,
     ) -> List[Dict[str, Any]]:
-        """Получить все задачи в диапазоне дат с полными данными (включая task_time)"""
+        """Получить задачи пользователя в указанном диапазоне дат."""
         try:
+            clauses = ["user_id = ?"]
+            params: list[Any] = [user_id]
+            if start_date is not None:
+                clauses.append("task_date >= ?")
+                params.append(start_date.isoformat())
+            if end_date is not None:
+                clauses.append("task_date <= ?")
+                params.append(end_date.isoformat())
+
             async with aiosqlite.connect(self.db_path) as db:
                 db.row_factory = aiosqlite.Row
-                query = """
-                    SELECT * FROM tasks 
-                    WHERE user_id = ?
-                    AND periodicity = 'none'
-                """
-                params = [user_id]
-                
-                if start_date:
-                    query += " AND task_date >= ?"
-                    params.append(start_date.isoformat())
-                
-                if end_date:
-                    query += " AND task_date <= ?"
-                    params.append(end_date.isoformat())
-                
-                query += " ORDER BY task_date ASC, task_time ASC"
-                
-                async with db.execute(query, tuple(params)) as cursor:
-                    rows = await cursor.fetchall()
-                    return [dict(row) for row in rows]
+                async with db.execute(
+                    f"SELECT * FROM tasks WHERE {' AND '.join(clauses)} ORDER BY task_date, task_time",
+                    params,
+                ) as cursor:
+                    return [dict(row) for row in await cursor.fetchall()]
         except Exception as e:
-            logger.error(f"Ошибка при получении задач по диапазону: {e}")
+            logger.error(f"Ошибка при получении задач за период: {e}")
+            raise
+
+    async def delete_tasks_by_ids(self, user_id: int, task_ids: List[int]) -> int:
+        """Удалить список задач пользователя вместе с их напоминаниями."""
+        if not task_ids:
+            return 0
+
+        try:
+            placeholders = ", ".join("?" for _ in task_ids)
+            params = [user_id, *task_ids]
+            async with aiosqlite.connect(self.db_path) as db:
+                await db.execute(
+                    f"DELETE FROM reminders WHERE user_id = ? AND task_id IN ({placeholders})",
+                    params,
+                )
+                cursor = await db.execute(
+                    f"DELETE FROM tasks WHERE user_id = ? AND id IN ({placeholders})",
+                    params,
+                )
+                await db.commit()
+                return cursor.rowcount
+        except Exception as e:
+            logger.error(f"Ошибка при массовом удалении задач: {e}")
             raise
     
     async def create_reminder(
@@ -448,117 +481,7 @@ class Database:
         except Exception as e:
             logger.error(f"Ошибка при удалении напоминаний: {e}")
             raise
-    
-    async def delete_one_time_tasks_by_date_range(
-        self,
-        user_id: int,
-        start_date: Optional[date] = None,
-        end_date: Optional[date] = None
-    ) -> int:
-        """Удалить одноразовые задачи в интервале дат"""
-        try:
-            async with aiosqlite.connect(self.db_path) as db:
-                # Сначала получаем ID задач для удаления напоминаний и записи в историю
-                db.row_factory = aiosqlite.Row
-                select_query = """
-                    SELECT id FROM tasks 
-                    WHERE user_id = ? 
-                    AND periodicity = 'none'
-                """
-                select_params = [user_id]
-                
-                if start_date:
-                    select_query += " AND task_date >= ?"
-                    select_params.append(start_date.isoformat())
-                
-                if end_date:
-                    select_query += " AND task_date <= ?"
-                    select_params.append(end_date.isoformat())
-                
-                async with db.execute(select_query, tuple(select_params)) as cursor:
-                    task_ids = [row[0] for row in await cursor.fetchall()]
-                
-                if not task_ids:
-                    return 0
-                
-                # Удаляем напоминания для этих задач
-                placeholders = ','.join(['?'] * len(task_ids))
-                await db.execute(f"""
-                    DELETE FROM reminders 
-                    WHERE task_id IN ({placeholders})
-                """, task_ids)
-                
-                # Записываем в историю перед удалением
-                for task_id in task_ids:
-                    await db.execute("""
-                        INSERT INTO task_history (task_id, user_id, action)
-                        VALUES (?, ?, ?)
-                    """, (task_id, user_id, "deleted"))
-                
-                # Удаляем задачи
-                delete_query = """
-                    DELETE FROM tasks 
-                    WHERE user_id = ? 
-                    AND periodicity = 'none'
-                """
-                delete_params = [user_id]
-                
-                if start_date:
-                    delete_query += " AND task_date >= ?"
-                    delete_params.append(start_date.isoformat())
-                
-                if end_date:
-                    delete_query += " AND task_date <= ?"
-                    delete_params.append(end_date.isoformat())
-                
-                cursor = await db.execute(delete_query, tuple(delete_params))
-                deleted_count = cursor.rowcount
-                await db.commit()
-                
-                logger.info(f"Удалено {deleted_count} одноразовых задач для пользователя {user_id}")
-                return deleted_count
-        except Exception as e:
-            logger.error(f"Ошибка при удалении задач: {e}")
-            raise
-    
-    async def delete_tasks_by_ids(self, user_id: int, task_ids: List[int]) -> int:
-        """Удалить задачи по списку ID"""
-        if not task_ids:
-            return 0
-        
-        try:
-            async with aiosqlite.connect(self.db_path) as db:
-                # Удаляем напоминания для этих задач
-                placeholders = ','.join(['?'] * len(task_ids))
-                await db.execute(f"""
-                    DELETE FROM reminders 
-                    WHERE task_id IN ({placeholders})
-                """, task_ids)
-                
-                # Записываем в историю перед удалением
-                for task_id in task_ids:
-                    await db.execute("""
-                        INSERT INTO task_history (task_id, user_id, action)
-                        VALUES (?, ?, ?)
-                    """, (task_id, user_id, "deleted"))
-                
-                # Удаляем задачи
-                await db.execute(f"""
-                    DELETE FROM tasks 
-                    WHERE id IN ({placeholders})
-                    AND user_id = ?
-                """, (*task_ids, user_id))
-                
-                deleted_count = len(task_ids)
-                await db.commit()
-                
-                logger.info(f"Удалено {deleted_count} задач по списку ID для пользователя {user_id}")
-                return deleted_count
-        except Exception as e:
-            logger.error(f"Ошибка при удалении задач по списку ID: {e}")
-            raise
 
 
 # Глобальный экземпляр базы данных
 db = Database()
-

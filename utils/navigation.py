@@ -29,3 +29,12 @@ async def clear_navigation_history(state: FSMContext):
     await state.update_data(nav_history=[])
 
 
+
+
+
+
+
+
+
+
+

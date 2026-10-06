@@ -2,7 +2,7 @@
 from aiogram import Router, F
 from aiogram.types import CallbackQuery
 from aiogram.fsm.context import FSMContext
-from datetime import date, datetime, timedelta
+from datetime import timedelta
 from utils.keyboards import (
     get_main_menu, get_delete_tasks_interval_keyboard, get_confirm_delete_tasks_keyboard
 )
@@ -10,6 +10,7 @@ from utils.navigation import save_navigation_state
 from utils.constants import DELETE_INTERVALS
 from utils.task_filters import filter_tasks_by_time
 from database import db
+from utils.datetime_utils import local_now, local_today
 from services.task_service import task_service
 import logging
 
@@ -54,8 +55,8 @@ async def confirm_delete_tasks(callback: CallbackQuery, state: FSMContext):
         interval = callback.data.split("_")[3]  # today, month, year, all
         
         user_id = callback.from_user.id
-        now = datetime.now()
-        today = date.today()
+        now = local_now()
+        today = local_today()
         start_date = None
         end_date = None
         interval_name = ""
@@ -119,6 +120,9 @@ async def confirm_delete_tasks(callback: CallbackQuery, state: FSMContext):
             start_date=start_date,
             end_date=end_date
         )
+
+        # Массовая очистка предназначена только для одноразовых задач.
+        tasks = [task for task in tasks if task.get("periodicity") == "none"]
         
         # Фильтруем задачи по времени: удаляем только те, которые уже прошли
         current_time = now.time()
@@ -149,4 +153,3 @@ async def confirm_delete_tasks(callback: CallbackQuery, state: FSMContext):
             reply_markup=get_main_menu()
         )
         await callback.answer("Ошибка!", show_alert=True)
-

@@ -1,11 +1,11 @@
 """Главный файл для запуска бота"""
 import asyncio
 import logging
-from datetime import datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramNetworkError
 from config import BOT_TOKEN, TIMEZONE
 from database import db
 from services.reminder_service import reminder_service
@@ -14,6 +14,7 @@ from utils.keyboards import get_reminder_actions
 from utils.formatting import format_reminder_message
 from middleware.restart_check import RestartCheckMiddleware, set_start_time
 from middleware.advanced_rate_limiter import AdvancedRateLimiterMiddleware
+from utils.datetime_utils import local_now
 
 # Импорт обработчиков
 from handlers import start, tasks, view, reminders, callbacks, calendar, time, cleanup, unhandled
@@ -28,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 async def check_and_send_reminders(bot: Bot):
     """Проверка и отправка напоминаний"""
-    logger.debug(f"⏰ Планировщик проверяет напоминания... (время: {datetime.now()})")
+    logger.debug(f"⏰ Планировщик проверяет напоминания... (время: {local_now()})")
     try:
         due_reminders = await reminder_service.get_due_reminders()
         
@@ -109,6 +110,31 @@ async def check_and_send_reminders(bot: Bot):
                     
     except Exception as e:
         logger.error(f"❌ Критическая ошибка при проверке напоминаний: {e}", exc_info=True)
+
+
+async def wait_for_telegram_api(bot: Bot) -> None:
+    """Дождаться доступности Telegram API перед запуском polling.
+
+    ``Dispatcher.start_polling`` получает сведения о боте до того, как
+    включает собственный механизм повторных попыток polling. Поэтому тайм-аут
+    этого первого getMe иначе завершает всё приложение.
+    """
+    delay_seconds = 5
+    max_delay_seconds = 60
+
+    while True:
+        try:
+            bot_info = await bot.me()
+            logger.info("Подключение к Telegram API установлено: @%s", bot_info.username)
+            return
+        except TelegramNetworkError as error:
+            logger.warning(
+                "Telegram API недоступен (%s). Повторная попытка через %s с.",
+                error,
+                delay_seconds,
+            )
+            await asyncio.sleep(delay_seconds)
+            delay_seconds = min(delay_seconds * 2, max_delay_seconds)
 
 
 async def main():
@@ -229,6 +255,7 @@ async def main():
     
     try:
         # Запуск бота
+        await wait_for_telegram_api(bot)
         logger.info("Бот запущен")
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
     finally:
@@ -242,4 +269,3 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("Остановка бота по запросу пользователя")
-

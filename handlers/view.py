@@ -4,13 +4,14 @@ from aiogram.types import CallbackQuery, Message
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from datetime import date, datetime
+from datetime import date
 from utils.keyboards import (
     get_main_menu, get_task_menu, get_tasks_list_keyboard, get_date_filters
 )
 from utils.formatting import format_tasks_list, format_task_message
 from utils.validators import validate_date
 from services.task_service import task_service
+from utils.datetime_utils import local_today
 import logging
 
 logger = logging.getLogger(__name__)
@@ -31,17 +32,21 @@ async def show_tasks_today(callback: CallbackQuery, state: FSMContext):
         from utils.navigation import save_navigation_state
         await save_navigation_state(state, "main_menu")
         
-        today = date.today()
+        today = local_today()
         tasks = await task_service.get_tasks_by_date(
             user_id=callback.from_user.id,
             task_date=today,
             show_completed=True
         )
         
+        # Сохраняем дату и задачи в состоянии для кнопки "Редактировать"
+        await state.update_data(selected_date=today.isoformat())
+        
         message = format_tasks_list(tasks, today)
         
         if tasks:
-            keyboard = get_tasks_list_keyboard(tasks, "view_task", "back")
+            from utils.keyboards import get_tasks_view_keyboard
+            keyboard = get_tasks_view_keyboard("back")
         else:
             from utils.keyboards import InlineKeyboardMarkup, InlineKeyboardButton
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -102,7 +107,7 @@ async def process_date_filter(message: Message, state: FSMContext):
     text = message.text.strip().lower()
     
     if text == "сегодня":
-        task_date = date.today()
+        task_date = local_today()
     else:
         is_valid, date_obj = validate_date(text)
         if not is_valid or not date_obj:
@@ -120,14 +125,22 @@ async def process_date_filter(message: Message, state: FSMContext):
             show_completed=True
         )
         
+        # Сохраняем дату в состоянии для кнопки "Редактировать"
+        await state.update_data(selected_date=task_date.isoformat())
+        
         message_text = format_tasks_list(tasks, task_date)
-        message_text += "\n\nВыберите фильтр:"
+        
+        if tasks:
+            from utils.keyboards import get_tasks_view_keyboard
+            keyboard = get_tasks_view_keyboard("back")
+        else:
+            message_text += "\n\nВыберите фильтр:"
+            keyboard = get_date_filters("back")
         
         await message.answer(
             message_text,
-            reply_markup=get_date_filters("back")
+            reply_markup=keyboard
         )
-        await state.update_data(selected_date=task_date.isoformat())
         await state.clear()
     except Exception as e:
         logger.error(f"Ошибка при получении задач: {e}")
@@ -145,9 +158,9 @@ async def filter_all(callback: CallbackQuery, state: FSMContext):
         try:
             task_date = date.fromisoformat(selected_date_str)
         except (ValueError, TypeError):
-            task_date = date.today()
+            task_date = local_today()
     else:
-        task_date = date.today()
+        task_date = local_today()
     
     try:
         tasks = await task_service.get_tasks_by_date(
@@ -155,8 +168,12 @@ async def filter_all(callback: CallbackQuery, state: FSMContext):
             task_date=task_date,
             show_completed=True
         )
+        # Сохраняем дату в состоянии для кнопки "Редактировать"
+        await state.update_data(selected_date=task_date.isoformat())
+        
         message = format_tasks_list(tasks, task_date)
-        keyboard = get_tasks_list_keyboard(tasks, "view_task", "back") if tasks else get_main_menu()
+        from utils.keyboards import get_tasks_view_keyboard
+        keyboard = get_tasks_view_keyboard("back") if tasks else get_main_menu()
         await callback.message.edit_text(message, reply_markup=keyboard)
         await callback.answer()
     except Exception as e:
@@ -175,9 +192,9 @@ async def filter_completed(callback: CallbackQuery, state: FSMContext):
         try:
             task_date = date.fromisoformat(selected_date_str)
         except (ValueError, TypeError):
-            task_date = date.today()
+            task_date = local_today()
     else:
-        task_date = date.today()
+        task_date = local_today()
     
     try:
         tasks = await task_service.get_tasks_by_date(
@@ -187,8 +204,12 @@ async def filter_completed(callback: CallbackQuery, state: FSMContext):
         )
         # Фильтруем только выполненные
         completed_tasks = [t for t in tasks if t.get("is_completed")]
+        # Сохраняем дату в состоянии для кнопки "Редактировать"
+        await state.update_data(selected_date=task_date.isoformat())
+        
         message = format_tasks_list(completed_tasks, task_date)
-        keyboard = get_tasks_list_keyboard(completed_tasks, "view_task", "back") if completed_tasks else get_main_menu()
+        from utils.keyboards import get_tasks_view_keyboard
+        keyboard = get_tasks_view_keyboard("back") if completed_tasks else get_main_menu()
         await callback.message.edit_text(message, reply_markup=keyboard)
         await callback.answer()
     except Exception as e:
@@ -197,25 +218,72 @@ async def filter_completed(callback: CallbackQuery, state: FSMContext):
 
 
 @router.callback_query(F.data == "filter_overdue")
-async def filter_overdue(callback: CallbackQuery):
+async def filter_overdue(callback: CallbackQuery, state: FSMContext):
     """Показать просроченные задачи"""
     try:
+        today = local_today()
         tasks = await task_service.get_tasks_by_date(
             user_id=callback.from_user.id,
-            task_date=date.today(),
+            task_date=today,
             show_completed=False,
             show_overdue=True
         )
+        # Сохраняем дату в состоянии для кнопки "Редактировать"
+        await state.update_data(selected_date=today.isoformat())
+        
         message = "📋 Просроченные задачи\n\n"
         if tasks:
-            message += format_tasks_list(tasks, date.today())
+            message += format_tasks_list(tasks, today)
         else:
             message += "Просроченных задач нет."
-        keyboard = get_tasks_list_keyboard(tasks, "view_task", "back") if tasks else get_main_menu()
+        from utils.keyboards import get_tasks_view_keyboard
+        keyboard = get_tasks_view_keyboard("back") if tasks else get_main_menu()
         await callback.message.edit_text(message, reply_markup=keyboard)
         await callback.answer()
     except Exception as e:
         logger.error(f"Ошибка при получении задач: {e}")
+        await callback.answer("Ошибка!")
+
+
+@router.callback_query(F.data == "edit_tasks_list")
+async def edit_tasks_list(callback: CallbackQuery, state: FSMContext):
+    """Показать список задач для редактирования (текущая реализация с кнопками)"""
+    try:
+        # Получаем дату из состояния
+        state_data = await state.get_data()
+        selected_date_str = state_data.get("selected_date")
+        
+        if selected_date_str:
+            try:
+                task_date = date.fromisoformat(selected_date_str)
+            except (ValueError, TypeError):
+                task_date = local_today()
+        else:
+            task_date = local_today()
+        
+        # Сохраняем дату в состоянии для навигации
+        await state.update_data(selected_date=task_date.isoformat())
+        
+        # Получаем задачи на эту дату
+        tasks = await task_service.get_tasks_by_date(
+            user_id=callback.from_user.id,
+            task_date=task_date,
+            show_completed=True
+        )
+        
+        if not tasks:
+            await callback.answer("Нет задач для редактирования", show_alert=True)
+            return
+        
+        # Показываем текущую реализацию с кнопками задач
+        message = format_tasks_list(tasks, task_date)
+        message += "\n\nВыберите задачу для редактирования:"
+        
+        keyboard = get_tasks_list_keyboard(tasks, "view_task", "back")
+        await callback.message.edit_text(message, reply_markup=keyboard)
+        await callback.answer()
+    except Exception as e:
+        logger.error(f"Ошибка при получении задач для редактирования: {e}")
         await callback.answer("Ошибка!")
 
 
@@ -243,4 +311,3 @@ async def view_task(callback: CallbackQuery, state: FSMContext):
     except Exception as e:
         logger.error(f"Ошибка при получении задачи: {e}")
         await callback.answer("Ошибка!")
-

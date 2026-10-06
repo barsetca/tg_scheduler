@@ -3,7 +3,6 @@ from typing import Callable, Dict, Any, Awaitable
 from aiogram import BaseMiddleware
 from aiogram.types import TelegramObject, Message, CallbackQuery
 from datetime import datetime
-from utils.keyboards import get_main_menu
 import logging
 import os
 

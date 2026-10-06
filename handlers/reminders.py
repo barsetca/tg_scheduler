@@ -3,12 +3,12 @@ from aiogram import Router, F
 from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from datetime import datetime, timedelta
-from utils.keyboards import get_reminder_actions, get_task_menu
+from datetime import timedelta
 from utils.formatting import format_reminder_message
 from services.reminder_service import reminder_service
 from services.task_service import task_service
 from utils.validators import validate_minutes
+from utils.datetime_utils import local_now
 import logging
 
 logger = logging.getLogger(__name__)
@@ -78,8 +78,7 @@ async def process_postpone(message: Message, state: FSMContext):
             await state.clear()
             return
         
-        new_time = datetime.now() + timedelta(minutes=minutes)
-        from utils.keyboards import get_main_menu
+        new_time = local_now() + timedelta(minutes=minutes)
         from utils.keyboards import InlineKeyboardMarkup, InlineKeyboardButton
         
         # Клавиатура с кнопкой ОК для перехода в главное меню
@@ -104,7 +103,6 @@ async def reminder_ok(callback: CallbackQuery):
     """Обработка кнопки ОК при напоминании - отключить напоминание и перейти в главное меню"""
     try:
         parts = callback.data.split("_")
-        reminder_id = int(parts[2])
         task_id = int(parts[3])
         
         # Проверяем, что задача принадлежит пользователю
@@ -113,8 +111,8 @@ async def reminder_ok(callback: CallbackQuery):
             await callback.answer("❌ Задача не найдена или не принадлежит вам!", show_alert=True)
             return
         
-        # Отключаем напоминание (устанавливаем reminder_time=0)
-        await task_service.update_task(task_id, callback.from_user.id, reminder_time=0)
+        # Отключаем напоминание. Ноль означает «в момент задачи».
+        await task_service.update_task(task_id, callback.from_user.id, reminder_time=-1)
         
         # Удаляем все неотправленные напоминания для этой задачи
         from database import db
@@ -131,4 +129,3 @@ async def reminder_ok(callback: CallbackQuery):
     except Exception as e:
         logger.error(f"Ошибка при обработке кнопки ОК напоминания: {e}", exc_info=True)
         await callback.answer("❌ Ошибка сервера. Попробуйте позже.", show_alert=True)
-

@@ -2,6 +2,7 @@
 from aiogram import Router, F
 from aiogram.types import CallbackQuery
 from aiogram.fsm.context import FSMContext
+from datetime import date
 from utils.keyboards import (
     get_main_menu, get_task_menu, get_confirm_delete_keyboard
 )
@@ -9,6 +10,7 @@ from utils.formatting import format_task_message
 from utils.navigation import get_previous_state
 from services.task_service import task_service
 import logging
+from utils.datetime_utils import local_today
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +29,6 @@ async def complete_task(callback: CallbackQuery):
             return
         
         # Проверяем, что задача не в будущем
-        from datetime import date
         task_date_str = task.get("task_date")
         if task_date_str:
             if isinstance(task_date_str, str):
@@ -35,7 +36,7 @@ async def complete_task(callback: CallbackQuery):
             else:
                 task_date = task_date_str
             
-            today = date.today()
+            today = local_today()
             if task_date > today:
                 await callback.answer(
                     "❌ Нельзя завершить задачу с будущей датой!",
@@ -162,7 +163,7 @@ async def back_action(callback: CallbackQuery, state: FSMContext):
                 await state.set_state("TaskCreationStates:waiting_for_time")
                 await state.update_data(time_context="create")
                 await callback.message.edit_text(
-                    f"Дата: {data.get('task_date', date.today()).strftime('%d.%m.%Y')}\n\n"
+                    f"Дата: {data.get('task_date', local_today()).strftime('%d.%m.%Y')}\n\n"
                     "Выберите время или нажмите 'Пропустить':",
                     reply_markup=get_time_keyboard(hours=hours, minutes=minutes, prefix="time_create")
                 )
@@ -215,4 +216,3 @@ async def back_action(callback: CallbackQuery, state: FSMContext):
             reply_markup=get_main_menu()
         )
         await callback.answer("Ошибка")
-

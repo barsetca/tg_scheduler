@@ -1,10 +1,16 @@
 """Сервис для работы с задачами"""
 import logging
+from calendar import monthrange
 from datetime import date, time, datetime, timedelta
 from typing import Optional, Dict, Any
-from database import db
+from database import UNSET, db
+from utils.datetime_utils import local_now
 
 logger = logging.getLogger(__name__)
+
+
+class TaskValidationError(ValueError):
+    """Ошибка проверки данных задачи, которую можно показать пользователю."""
 
 
 class TaskService:
@@ -21,6 +27,9 @@ class TaskService:
         periodicity: str = "none"
     ) -> int:
         """Создать задачу"""
+        if periodicity == "none" and task_date < local_now().date():
+            raise TaskValidationError("Одноразовую задачу нельзя создать задним числом.")
+
         task_id = await db.create_task(
             user_id=user_id,
             title=title,
@@ -31,8 +40,9 @@ class TaskService:
             periodicity=periodicity
         )
         
-        # Создаем напоминание, если указано время и время напоминания > 0
-        if task_time and reminder_time > 0:
+        # Значение 0 означает напоминание точно в момент задачи; отрицательное
+        # значение используется только для явной отмены напоминания.
+        if task_time and reminder_time >= 0:
             await TaskService._create_reminder_for_task(
                 task_id=task_id,
                 user_id=user_id,
@@ -57,7 +67,7 @@ class TaskService:
         reminder_datetime = task_datetime - timedelta(minutes=reminder_time)
         
         # Если напоминание в будущем, создаем его
-        if reminder_datetime > datetime.now():
+        if reminder_datetime > local_now():
             reminder_id = await db.create_reminder(
                 task_id=task_id,
                 user_id=user_id,
@@ -79,7 +89,7 @@ class TaskService:
         title: Optional[str] = None,
         description: Optional[str] = None,
         task_date: Optional[date] = None,
-        task_time: Optional[time] = None,
+        task_time: Optional[time] | object = UNSET,
         reminder_time: Optional[int] = None,
         periodicity: Optional[str] = None
     ) -> bool:
@@ -88,6 +98,47 @@ class TaskService:
         task = await db.get_task(task_id, user_id)
         if not task:
             return False
+
+        # У периодической задачи нельзя оставлять очередное срабатывание в
+        # прошлом. Иначе задача отображается как актуальная, но напоминание
+        # для неё не создаётся в _create_reminder_for_task().
+        is_time_update = task_time is not UNSET
+        effective_task_date = task_date
+        effective_task_time = task_time
+        current_date = (
+            date.fromisoformat(task["task_date"])
+            if isinstance(task["task_date"], str)
+            else task["task_date"]
+        )
+        current_time = (
+            time.fromisoformat(task["task_time"])
+            if isinstance(task.get("task_time"), str)
+            else task.get("task_time")
+        )
+        final_date = task_date if task_date is not None else current_date
+        final_time = task_time if is_time_update else current_time
+        final_periodicity = periodicity if periodicity is not None else task.get("periodicity", "none")
+
+        if final_periodicity == "none" and final_date < local_now().date():
+            raise TaskValidationError("Одноразовую задачу нельзя перенести на прошедшую дату.")
+
+        if (
+            is_time_update
+            and final_time is not None
+            and final_periodicity != "none"
+            and datetime.combine(final_date, final_time) <= local_now()
+        ):
+            effective_task_date, effective_task_time = TaskService._calculate_next_period(
+                task_date=final_date,
+                task_time=final_time,
+                periodicity=final_periodicity,
+            )
+            logger.info(
+                "Время периодической задачи %s уже прошло; следующее срабатывание перенесено на %s %s",
+                task_id,
+                effective_task_date,
+                effective_task_time,
+            )
         
         # Обновляем задачу
         result = await db.update_task(
@@ -95,26 +146,24 @@ class TaskService:
             user_id=user_id,
             title=title,
             description=description,
-            task_date=task_date,
-            task_time=task_time,
+            task_date=effective_task_date,
+            task_time=effective_task_time,
             reminder_time=reminder_time,
             periodicity=periodicity
         )
         
         # Если изменились дата, время или время напоминания, обновляем напоминания
-        if result and (task_date or task_time or reminder_time is not None):
+        if result and (effective_task_date is not None or is_time_update or reminder_time is not None):
             # Удаляем старые напоминания
             await db.delete_reminders_by_task(task_id)
             
             # Создаем новое напоминание
-            final_date = task_date if task_date else date.fromisoformat(task["task_date"])
-            final_time = task_time if task_time else (
-                time.fromisoformat(task["task_time"]) if task["task_time"] else None
-            )
+            final_date = effective_task_date if effective_task_date is not None else current_date
+            final_time = effective_task_time if is_time_update else current_time
             final_reminder_time = reminder_time if reminder_time is not None else task["reminder_time"]
             
-            # Создаем напоминание только если есть время и время напоминания > 0
-            if final_time and final_reminder_time > 0:
+            # Ноль минут означает напоминание в момент задачи.
+            if final_time and final_reminder_time >= 0:
                 await TaskService._create_reminder_for_task(
                     task_id=task_id,
                     user_id=user_id,
@@ -170,45 +219,41 @@ class TaskService:
         periodicity: str
     ) -> tuple:
         """Вычислить следующую дату и время для периодической задачи"""
-        if periodicity == "hourly":
-            if task_time:
-                next_time = (datetime.combine(task_date, task_time) + timedelta(hours=1)).time()
-                next_date = date.today()
-                # Если время уже прошло сегодня, берем завтра
-                if datetime.combine(next_date, next_time) < datetime.now():
-                    next_date = next_date + timedelta(days=1)
-                return next_date, next_time
-        
-        elif periodicity == "daily":
-            next_date = date.today() + timedelta(days=1)
-            return next_date, task_time
-        
+        if periodicity == "hourly" and task_time:
+            next_datetime = datetime.combine(task_date, task_time) + timedelta(hours=1)
+            while next_datetime <= local_now():
+                next_datetime += timedelta(hours=1)
+            return next_datetime.date(), next_datetime.time()
+
+        if periodicity == "daily":
+            next_date = task_date + timedelta(days=1)
         elif periodicity == "weekly":
-            next_date = date.today() + timedelta(days=7)
-            return next_date, task_time
-        
+            next_date = task_date + timedelta(weeks=1)
         elif periodicity == "monthly":
-            next_date = date.today()
-            # Добавляем месяц
-            if next_date.month == 12:
-                next_date = next_date.replace(year=next_date.year + 1, month=1)
-            else:
-                try:
-                    next_date = next_date.replace(month=next_date.month + 1)
-                except ValueError:
-                    # Если день не существует в следующем месяце (например, 31 января -> февраль)
-                    # Переходим на последний день следующего месяца
-                    if next_date.month == 12:
-                        next_date = date(next_date.year + 1, 1, 1)
-                    else:
-                        next_date = date(next_date.year, next_date.month + 1, 1)
-            return next_date, task_time
-        
+            year = task_date.year + (task_date.month // 12)
+            month = task_date.month % 12 + 1
+            next_date = date(year, month, min(task_date.day, monthrange(year, month)[1]))
         elif periodicity == "yearly":
-            next_date = date.today().replace(year=date.today().year + 1)
-            return next_date, task_time
-        
-        return None, None
+            year = task_date.year + 1
+            next_date = date(year, task_date.month, min(task_date.day, monthrange(year, task_date.month)[1]))
+        else:
+            return None, None
+
+        # Если задача давно просрочена, пропускаем уже прошедшие повторения.
+        while datetime.combine(next_date, task_time or time.min) <= local_now():
+            if periodicity == "daily":
+                next_date += timedelta(days=1)
+            elif periodicity == "weekly":
+                next_date += timedelta(weeks=1)
+            elif periodicity == "monthly":
+                year = next_date.year + (next_date.month // 12)
+                month = next_date.month % 12 + 1
+                next_date = date(year, month, min(next_date.day, monthrange(year, month)[1]))
+            else:  # yearly
+                year = next_date.year + 1
+                next_date = date(year, next_date.month, min(next_date.day, monthrange(year, next_date.month)[1]))
+
+        return next_date, task_time
     
     @staticmethod
     async def delete_task(task_id: int, user_id: int) -> bool:
@@ -228,4 +273,3 @@ class TaskService:
 
 # Глобальный экземпляр сервиса
 task_service = TaskService()
-

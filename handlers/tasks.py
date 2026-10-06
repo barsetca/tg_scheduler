@@ -4,16 +4,15 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from datetime import date, time, datetime
 from utils.keyboards import (
     get_main_menu, get_reminder_time_keyboard, get_periodicity_keyboard,
-    get_task_menu, get_edit_task_keyboard, get_confirm_delete_keyboard,
-    get_calendar_keyboard, get_time_keyboard
+    get_task_menu, get_edit_task_keyboard, get_calendar_keyboard, get_time_keyboard
 )
 from utils.navigation import save_navigation_state, get_previous_state
 from utils.formatting import format_task_message, format_task_created_message
 from utils.validators import validate_time, validate_date, is_date_in_past
-from services.task_service import task_service
+from services.task_service import TaskValidationError, task_service
+from utils.datetime_utils import local_today
 import logging
 
 logger = logging.getLogger(__name__)
@@ -107,7 +106,7 @@ async def process_date(message: Message, state: FSMContext):
     text = message.text.strip().lower()
     
     if text == "сегодня" or text == "":
-        task_date = date.today()
+        task_date = local_today()
     else:
         is_valid, date_obj = validate_date(text)
         if not is_valid or not date_obj:
@@ -181,7 +180,7 @@ async def process_reminder(callback: CallbackQuery, state: FSMContext):
         if previous_state == "TaskCreationStates:waiting_for_time":
             await state.set_state(TaskCreationStates.waiting_for_time)
             data = await state.get_data()
-            task_date = data.get("task_date", date.today())
+            task_date = data.get("task_date", local_today())
             await callback.message.edit_text(
                 f"Дата: {task_date.strftime('%d.%m.%Y')}\n\n"
                 "Установить время? (введите в формате HH:MM или отправьте 'нет' для пропуска)"
@@ -191,7 +190,7 @@ async def process_reminder(callback: CallbackQuery, state: FSMContext):
     
     # Обработка отмены напоминания
     if callback.data == "reminder_cancel":
-        await state.update_data(reminder_time=0)
+        await state.update_data(reminder_time=-1)
         await state.set_state(TaskCreationStates.waiting_for_periodicity)
         await save_navigation_state(state, "TaskCreationStates:waiting_for_reminder")
         
@@ -214,7 +213,7 @@ async def process_reminder(callback: CallbackQuery, state: FSMContext):
     elif minutes == 10080:
         reminder_text = "за 1 неделю"
     elif minutes == 0:
-        reminder_text = "не установлено"
+        reminder_text = "в момент задачи"
     else:
         reminder_text = f"за {minutes} минут"
     
@@ -306,6 +305,10 @@ async def process_periodicity(callback: CallbackQuery, state: FSMContext):
             reply_markup=get_task_menu(task_id, "back")
         )
         await callback.answer("✅ Задача создана!")
+        await state.clear()
+    except TaskValidationError as e:
+        await callback.message.edit_text(str(e), reply_markup=get_main_menu())
+        await callback.answer(str(e), show_alert=True)
         await state.clear()
     except Exception as e:
         logger.error(f"Ошибка при создании задачи: {e}")
@@ -414,7 +417,7 @@ async def process_edit_date(message: Message, state: FSMContext):
     text = message.text.strip().lower()
     
     if text == "сегодня":
-        task_date = date.today()
+        task_date = local_today()
     else:
         is_valid, date_obj = validate_date(text)
         if not is_valid or not date_obj:
@@ -541,7 +544,7 @@ async def process_edit_reminder(callback: CallbackQuery, state: FSMContext):
         data = await state.get_data()
         task_id = data.get("task_id")
         if task_id:
-            await task_service.update_task(task_id, callback.from_user.id, reminder_time=0)
+            await task_service.update_task(task_id, callback.from_user.id, reminder_time=-1)
             task = await task_service.get_task(task_id, callback.from_user.id)
             await callback.message.edit_text(
                 f"✅ Напоминание отменено!\n\n{format_task_message(task)}",
@@ -578,15 +581,6 @@ async def process_edit_reminder(callback: CallbackQuery, state: FSMContext):
             task_id, callback.from_user.id, reminder_time=minutes
         )
         
-        # Форматирование времени напоминания для сообщения
-        if minutes == 1440:
-            reminder_text = "за 1 сутки"
-        elif minutes == 10080:
-            reminder_text = "за 1 неделю"
-        elif minutes == 0:
-            reminder_text = "не установлено"
-        else:
-            reminder_text = f"за {minutes} минут"
         task = await task_service.get_task(task_id, callback.from_user.id)
         await callback.message.edit_text(
             f"✅ Задача обновлена!\n\n{format_task_message(task)}",
@@ -664,4 +658,3 @@ async def process_edit_periodicity(callback: CallbackQuery, state: FSMContext):
         logger.error(f"Ошибка при обновлении задачи: {e}")
         await callback.message.edit_text("❌ Ошибка сервера. Попробуйте позже.")
         await callback.answer("Ошибка!")
-

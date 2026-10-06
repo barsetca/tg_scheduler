@@ -2,9 +2,9 @@
 from aiogram import Router, F
 from aiogram.types import CallbackQuery
 from aiogram.fsm.context import FSMContext
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from utils.keyboards import get_calendar_keyboard
-from utils.navigation import save_navigation_state
+from utils.datetime_utils import local_today
 import logging
 
 logger = logging.getLogger(__name__)
@@ -36,7 +36,7 @@ async def handle_calendar(callback: CallbackQuery, state: FSMContext):
             month = int(parts[3 + prefix_offset])
             day = int(parts[4 + prefix_offset])
             selected_date = date(year, month, day)
-            today = date.today()
+            today = local_today()
             
             # Проверяем, что дата не в прошлом (только для создания задач)
             if calendar_context == "create" and selected_date < today:
@@ -95,7 +95,7 @@ async def handle_calendar(callback: CallbackQuery, state: FSMContext):
                 # Просмотр задач на выбранную дату
                 from services.task_service import task_service
                 from utils.formatting import format_tasks_list
-                from utils.keyboards import get_tasks_list_keyboard, get_date_filters
+                from utils.keyboards import get_date_filters
                 from utils.navigation import save_navigation_state
                 
                 # Сохраняем состояние навигации
@@ -114,7 +114,8 @@ async def handle_calendar(callback: CallbackQuery, state: FSMContext):
                 
                 # Показываем список задач, если они есть, иначе показываем фильтры
                 if tasks:
-                    keyboard = get_tasks_list_keyboard(tasks, "view_task", "back")
+                    from utils.keyboards import get_tasks_view_keyboard
+                    keyboard = get_tasks_view_keyboard("back")
                     await callback.message.edit_text(
                         message_text,
                         reply_markup=keyboard
@@ -130,7 +131,7 @@ async def handle_calendar(callback: CallbackQuery, state: FSMContext):
             
         elif action == "today":
             # Быстрый выбор сегодня
-            today = date.today()
+            today = local_today()
             await state.update_data(task_date=today)
             
             if calendar_context == "create":
@@ -180,7 +181,7 @@ async def handle_calendar(callback: CallbackQuery, state: FSMContext):
             elif calendar_context == "view_tasks":
                 from services.task_service import task_service
                 from utils.formatting import format_tasks_list
-                from utils.keyboards import get_tasks_list_keyboard, get_date_filters
+                from utils.keyboards import get_date_filters
                 from utils.navigation import save_navigation_state
                 
                 # Сохраняем состояние навигации
@@ -199,7 +200,8 @@ async def handle_calendar(callback: CallbackQuery, state: FSMContext):
                 
                 # Показываем список задач, если они есть, иначе показываем фильтры
                 if tasks:
-                    keyboard = get_tasks_list_keyboard(tasks, "view_task", "back")
+                    from utils.keyboards import get_tasks_view_keyboard
+                    keyboard = get_tasks_view_keyboard("back")
                     await callback.message.edit_text(
                         message_text,
                         reply_markup=keyboard
@@ -215,7 +217,7 @@ async def handle_calendar(callback: CallbackQuery, state: FSMContext):
             
         elif action == "tomorrow":
             # Быстрый выбор завтра
-            tomorrow = date.today() + timedelta(days=1)
+            tomorrow = local_today() + timedelta(days=1)
             await state.update_data(task_date=tomorrow)
             
             if calendar_context == "create":
@@ -265,7 +267,7 @@ async def handle_calendar(callback: CallbackQuery, state: FSMContext):
             elif calendar_context == "view_tasks":
                 from services.task_service import task_service
                 from utils.formatting import format_tasks_list
-                from utils.keyboards import get_tasks_list_keyboard, get_date_filters
+                from utils.keyboards import get_date_filters
                 from utils.navigation import save_navigation_state
                 
                 # Сохраняем состояние навигации
@@ -284,7 +286,8 @@ async def handle_calendar(callback: CallbackQuery, state: FSMContext):
                 
                 # Показываем список задач, если они есть, иначе показываем фильтры
                 if tasks:
-                    keyboard = get_tasks_list_keyboard(tasks, "view_task", "back")
+                    from utils.keyboards import get_tasks_view_keyboard
+                    keyboard = get_tasks_view_keyboard("back")
                     await callback.message.edit_text(
                         message_text,
                         reply_markup=keyboard
@@ -306,7 +309,7 @@ async def handle_calendar(callback: CallbackQuery, state: FSMContext):
                 month = int(parts[4 + prefix_offset])
             except (IndexError, ValueError):
                 # Если не удалось распарсить, используем текущую дату
-                today = date.today()
+                today = local_today()
                 year = today.year
                 month = today.month
             
@@ -321,7 +324,7 @@ async def handle_calendar(callback: CallbackQuery, state: FSMContext):
             if selected_date and isinstance(selected_date, str):
                 try:
                     selected_date = date.fromisoformat(selected_date)
-                except:
+                except (TypeError, ValueError):
                     selected_date = None
             
             prefix = "calendar_view" if calendar_context == "view_tasks" else "calendar"
@@ -338,7 +341,7 @@ async def handle_calendar(callback: CallbackQuery, state: FSMContext):
                 month = int(parts[4 + prefix_offset])
             except (IndexError, ValueError):
                 # Если не удалось распарсить, используем текущую дату
-                today = date.today()
+                today = local_today()
                 year = today.year
                 month = today.month
             
@@ -353,7 +356,7 @@ async def handle_calendar(callback: CallbackQuery, state: FSMContext):
             if selected_date and isinstance(selected_date, str):
                 try:
                     selected_date = date.fromisoformat(selected_date)
-                except:
+                except (TypeError, ValueError):
                     selected_date = None
             
             prefix = "calendar_view" if calendar_context == "view_tasks" else "calendar"
@@ -371,4 +374,3 @@ async def handle_calendar(callback: CallbackQuery, state: FSMContext):
 async def ignore_callback(callback: CallbackQuery):
     """Игнорирование callback (для неактивных кнопок)"""
     await callback.answer()
-

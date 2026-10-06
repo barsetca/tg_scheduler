@@ -2,6 +2,7 @@
 import re
 from datetime import date, time, datetime
 from typing import Optional, Tuple
+from utils.datetime_utils import local_today
 
 
 def validate_time(time_str: str) -> Tuple[bool, Optional[time]]:
@@ -35,7 +36,7 @@ def validate_date(date_str: str) -> Tuple[bool, Optional[date]]:
     # Формат DD.MM (текущий год)
     try:
         date_obj = datetime.strptime(date_str, "%d.%m").date()
-        date_obj = date_obj.replace(year=date.today().year)
+        date_obj = date_obj.replace(year=local_today().year)
         return True, date_obj
     except ValueError:
         pass
@@ -56,7 +57,7 @@ def validate_minutes(minutes_str: str) -> Tuple[bool, Optional[int]]:
 
 def is_date_in_past(date_obj: date) -> bool:
     """Проверка, что дата не в прошлом"""
-    return date_obj < date.today()
+    return date_obj < local_today()
 
 
 def parse_date(date_value: str | date) -> date:
@@ -82,4 +83,3 @@ def parse_time(time_value: str | time | None) -> time | None:
         except ValueError:
             return time(0, 0)  # Возвращаем время по умолчанию при ошибке
     raise ValueError(f"Невозможно распарсить время: {time_value}")
-

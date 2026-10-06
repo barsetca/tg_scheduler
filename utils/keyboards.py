@@ -1,8 +1,9 @@
 """Создание клавиатур для бота"""
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from typing import Optional, List, Dict
-from datetime import date, datetime, timedelta
+from typing import List, Dict
+from datetime import date
 from calendar import monthrange
+from utils.datetime_utils import local_today
 
 
 def get_main_menu() -> InlineKeyboardMarkup:
@@ -125,7 +126,7 @@ def get_confirm_delete_keyboard(task_id: int) -> InlineKeyboardMarkup:
 
 
 def get_tasks_list_keyboard(tasks: List[Dict], prefix: str = "view_task", back_callback: str = "back") -> InlineKeyboardMarkup:
-    """Клавиатура со списком задач"""
+    """Клавиатура со списком задач (для редактирования)"""
     buttons = []
     for task in tasks:
         status = "☑" if task.get("is_completed") else "☐"
@@ -163,6 +164,18 @@ def get_tasks_list_keyboard(tasks: List[Dict], prefix: str = "view_task", back_c
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+def get_tasks_view_keyboard(back_callback: str = "back") -> InlineKeyboardMarkup:
+    """Клавиатура для просмотра списка задач (с кнопкой Редактировать)"""
+    buttons = [
+        [InlineKeyboardButton(text="✏️ Редактировать", callback_data="edit_tasks_list")],
+        [
+            InlineKeyboardButton(text="◀️ Назад", callback_data=back_callback),
+            InlineKeyboardButton(text="🏠 Меню", callback_data="main_menu")
+        ]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
 def get_edit_task_keyboard(task_id: int, back_callback: str = None) -> InlineKeyboardMarkup:
     """Меню редактирования задачи"""
     if back_callback is None:
@@ -184,7 +197,7 @@ def get_edit_task_keyboard(task_id: int, back_callback: str = None) -> InlineKey
 def get_calendar_keyboard(year: int = None, month: int = None, selected_date: date = None, prefix: str = "calendar") -> InlineKeyboardMarkup:
     """Создать календарь для выбора даты"""
     if year is None or month is None:
-        today = date.today()
+        today = local_today()
         year = today.year
         month = today.month
     
@@ -199,7 +212,7 @@ def get_calendar_keyboard(year: int = None, month: int = None, selected_date: da
     
     # Получаем первый день месяца и количество дней
     first_day, num_days = monthrange(year, month)
-    today = date.today()
+    today = local_today()
     
     # Создаем кнопки календаря
     buttons = []
@@ -218,7 +231,6 @@ def get_calendar_keyboard(year: int = None, month: int = None, selected_date: da
     ])
     
     # Дни месяца
-    current_date = date(year, month, 1)
     week = []
     
     # Заполняем пустые ячейки до первого дня месяца
@@ -340,4 +352,3 @@ def get_confirm_delete_tasks_keyboard(interval: str) -> InlineKeyboardMarkup:
         ]
     ])
     return keyboard
-
